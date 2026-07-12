@@ -125,8 +125,20 @@
       text-transform: uppercase;
     }
     .status.running { background: rgba(34,197,94,0.2); color: var(--success); }
-    .status.pending, .status.deploying { background: rgba(245,158,11,0.2); color: var(--warning); }
+    .status.pending, .status.deploying, .status.deleting { background: rgba(245,158,11,0.2); color: var(--warning); }
     .status.failed { background: rgba(239,68,68,0.2); color: var(--danger); }
+    .stack-actions { display: flex; flex-direction: column; align-items: flex-end; gap: 0.5rem; }
+    button.danger {
+      padding: 0.35rem 0.75rem;
+      background: transparent;
+      border: 1px solid var(--danger);
+      color: var(--danger);
+      border-radius: 6px;
+      font-size: 0.75rem;
+      cursor: pointer;
+    }
+    button.danger:hover { background: rgba(239,68,68,0.15); }
+    button.danger:disabled { opacity: 0.4; cursor: not-allowed; }
     .message { padding: 0.75rem; border-radius: 8px; margin-top: 1rem; font-size: 0.875rem; }
     .message.error { background: rgba(239,68,68,0.15); color: var(--danger); }
     .message.success { background: rgba(34,197,94,0.15); color: var(--success); }
@@ -300,21 +312,42 @@
       }
     }
 
+    async function deleteStack(id, name) {
+      if (!confirm(`Удалить стек «${name}»?\n\nБудет удалён namespace и все сервисы (ClickHouse, Kafka, Airflow…).`)) {
+        return;
+      }
+      try {
+        await fetchJSON(`/stacks/${id}`, { method: 'DELETE' });
+        loadStacks();
+        loadQuota();
+      } catch (e) {
+        alert('Ошибка удаления: ' + e.message);
+      }
+    }
+
     async function loadStacks() {
       const stacks = await fetchJSON('/stacks');
       document.getElementById('stacks').innerHTML = stacks.length
-        ? stacks.map(s => `
+        ? stacks.map(s => {
+            const deleting = s.status === 'deleting';
+            return `
           <li class="stack-item">
             <div>
               <strong>${s.name}</strong>
               <div style="font-size:0.75rem;color:var(--muted)">${s.namespace}</div>
-              ${s.endpoints ? Object.entries(s.endpoints).map(([k,v]) =>
-                `<div style="font-size:0.75rem"><a href="${v.startsWith('http')?v:'#'}" style="color:var(--accent)">${k}</a></div>`
+              ${s.endpoints && !deleting ? Object.entries(s.endpoints).map(([k,v]) =>
+                `<div style="font-size:0.75rem"><a href="${v.startsWith('http')?v:'#'}" target="_blank" rel="noopener" style="color:var(--accent)">${k}</a></div>`
               ).join('') : ''}
             </div>
-            <span class="status ${s.status}">${s.status}</span>
-          </li>
-        `).join('')
+            <div class="stack-actions">
+              <span class="status ${s.status}">${s.status}</span>
+              <button class="danger" ${deleting ? 'disabled' : ''}
+                onclick="deleteStack('${s.id}', '${s.name}')">
+                ${deleting ? 'Удаление…' : 'Удалить'}
+              </button>
+            </div>
+          </li>`;
+          }).join('')
         : '<li style="color:var(--muted)">Нет активных стеков</li>';
     }
 

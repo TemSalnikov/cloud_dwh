@@ -20,19 +20,34 @@ SERVER_IP="${SERVER_IP:-192.168.31.195}"
 SERVER_USER="${SERVER_USER:-user}"
 REPO_DIR="${REPO_DIR:-/home/user/dev/cloud_dwh}"
 TAR="$REPO_ROOT/deploy/vendor/images/platform-images.tar"
+UPDATE_TAR="$REPO_ROOT/deploy/vendor/images/platform-api-update.tar"
 
 log() { echo "[sync-images] $*"; }
-[[ -f "$TAR" ]] || { echo "Нет $TAR — сначала: bash scripts/pack-platform-images.sh"; exit 1; }
+
+if [[ ! -f "$TAR" && ! -f "$UPDATE_TAR" ]]; then
+  echo "Нет образов — сначала: bash scripts/pack-platform-images.sh"
+  exit 1
+fi
 
 log "Sync images + helm platform → ${SERVER_USER}@${SERVER_IP}"
-ssh "${SERVER_USER}@${SERVER_IP}" "mkdir -p ${REPO_DIR}/deploy/vendor/images ${REPO_DIR}/helm/platform/templates ${REPO_DIR}/scripts"
+ssh "${SERVER_USER}@${SERVER_IP}" "mkdir -p ${REPO_DIR}/deploy/vendor/images ${REPO_DIR}/helm/platform/templates ${REPO_DIR}/scripts ${REPO_DIR}/platform-api"
 
-rsync -avz --progress "$TAR" \
-  "${SERVER_USER}@${SERVER_IP}:${REPO_DIR}/deploy/vendor/images/"
+if [[ -f "$TAR" ]]; then
+  rsync -avz --progress "$TAR" \
+    "${SERVER_USER}@${SERVER_IP}:${REPO_DIR}/deploy/vendor/images/"
+fi
+if [[ -f "$UPDATE_TAR" ]]; then
+  rsync -avz --progress "$UPDATE_TAR" \
+    "${SERVER_USER}@${SERVER_IP}:${REPO_DIR}/deploy/vendor/images/"
+fi
 
 rsync -avz \
   "$REPO_ROOT/helm/platform/" \
   "${SERVER_USER}@${SERVER_IP}:${REPO_DIR}/helm/platform/"
+
+rsync -avz \
+  "$REPO_ROOT/platform-api/" \
+  "${SERVER_USER}@${SERVER_IP}:${REPO_DIR}/platform-api/"
 
 rsync -avz \
   "$REPO_ROOT/scripts/load-platform-images.sh" \
@@ -42,4 +57,4 @@ rsync -avz \
 
 log "Done. На node1:"
 log "  sudo bash ${REPO_DIR}/scripts/load-platform-images.sh"
-log "  sudo bash ${REPO_DIR}/scripts/bootstrap.sh"
+log "  # удалить тестовый стек в UI и создать заново"

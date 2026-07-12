@@ -124,6 +124,26 @@ async def get_stack(stack_id: str, db: AsyncSession = Depends(get_db)):
     )
 
 
+async def _delete_stack(stack_id: str, name: str, namespace: str, spec: dict):
+    from app.database import SessionLocal
+    from uuid import UUID
+
+    try:
+        provisioner = StackProvisioner(str(stack_id), name, spec)
+        # ensure namespace from DB is used
+        provisioner.namespace = namespace
+        await provisioner.delete()
+    except Exception:
+        logger.exception("Delete namespace failed for stack %s", name)
+
+    async with SessionLocal() as db:
+        result = await db.execute(select(Stack).where(Stack.id == UUID(str(stack_id))))
+        stack = result.scalar_one_or_none()
+        if stack:
+            await db.delete(stack)
+            await db.commit()
+
+
 @router.delete("/stacks/{stack_id}", status_code=204)
 async def delete_stack(
     stack_id: str,
@@ -135,13 +155,13 @@ async def delete_stack(
     if not stack:
         raise HTTPException(404, "Stack not found")
 
+    if stack.status == StackStatus.deleting:
+        raise HTTPException(409, "Stack is already being deleted")
+
+    name = stack.name
+    namespace = stack.namespace
+    spec = stack.spec
     stack.status = StackStatus.deleting
     await db.commit()
 
-    async def _delete():
-        provisioner = StackProvisioner(str(stack.id), stack.name, stack.spec)
-        await provisioner.delete()
-        async with db.begin():
-            await db.delete(stack)
-
-    background_tasks.add_task(_delete)
+    background_tasks.add_task(_delete_stack, stack_id, name, namespace, spec)
