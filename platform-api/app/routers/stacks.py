@@ -2,6 +2,7 @@ import asyncio
 import logging
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from kubernetes.client.rest import ApiException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -9,10 +10,57 @@ from app.catalog import PRESETS
 from app.database import get_db
 from app.models.stack import Stack, StackStatus
 from app.schemas.stack import StackCreate, StackResponse
-from app.services.provisioner import StackProvisioner
+from app.services.provisioner import StackProvisioner, _get_k8s_clients
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["stacks"])
+
+_RECONCILE_STATUSES = frozenset(
+    {StackStatus.running, StackStatus.failed, StackStatus.deleting}
+)
+
+
+async def _namespace_exists(namespace: str) -> bool:
+    def _check() -> bool:
+        core, *_ = _get_k8s_clients()
+        try:
+            core.read_namespace(namespace)
+            return True
+        except ApiException as e:
+            if e.status == 404:
+                return False
+            raise
+
+    return await asyncio.to_thread(_check)
+
+
+async def _reconcile_orphan_stacks(stacks: list[Stack], db: AsyncSession) -> list[Stack]:
+    """Drop DB rows whose K8s namespace no longer exists."""
+    alive: list[Stack] = []
+    removed = 0
+
+    for stack in stacks:
+        if stack.status not in _RECONCILE_STATUSES:
+            alive.append(stack)
+            continue
+
+        if await _namespace_exists(stack.namespace):
+            alive.append(stack)
+            continue
+
+        await db.delete(stack)
+        removed += 1
+        logger.info(
+            "Removed orphan stack record %s (%s): namespace %s is gone",
+            stack.name,
+            stack.id,
+            stack.namespace,
+        )
+
+    if removed:
+        await db.commit()
+
+    return alive
 
 
 def _build_spec(body: StackCreate) -> dict:
@@ -90,7 +138,7 @@ async def create_stack(
 @router.get("/stacks", response_model=list[StackResponse])
 async def list_stacks(db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Stack).order_by(Stack.created_at.desc()))
-    stacks = result.scalars().all()
+    stacks = await _reconcile_orphan_stacks(list(result.scalars().all()), db)
     return [
         StackResponse(
             id=str(s.id),
@@ -124,24 +172,13 @@ async def get_stack(stack_id: str, db: AsyncSession = Depends(get_db)):
     )
 
 
-async def _delete_stack(stack_id: str, name: str, namespace: str, spec: dict):
-    from app.database import SessionLocal
-    from uuid import UUID
-
+async def _delete_namespace(namespace: str, name: str):
     try:
-        provisioner = StackProvisioner(str(stack_id), name, spec)
-        # ensure namespace from DB is used
+        provisioner = StackProvisioner("00000000-0000-0000-0000-000000000000", name, {})
         provisioner.namespace = namespace
         await provisioner.delete()
     except Exception:
         logger.exception("Delete namespace failed for stack %s", name)
-
-    async with SessionLocal() as db:
-        result = await db.execute(select(Stack).where(Stack.id == UUID(str(stack_id))))
-        stack = result.scalar_one_or_none()
-        if stack:
-            await db.delete(stack)
-            await db.commit()
 
 
 @router.delete("/stacks/{stack_id}", status_code=204)
@@ -155,13 +192,12 @@ async def delete_stack(
     if not stack:
         raise HTTPException(404, "Stack not found")
 
-    if stack.status == StackStatus.deleting:
-        raise HTTPException(409, "Stack is already being deleted")
-
     name = stack.name
     namespace = stack.namespace
-    spec = stack.spec
-    stack.status = StackStatus.deleting
+
+    # Remove from DB immediately so the UI does not show ghost stacks if the
+    # background namespace delete is slow or the pod restarts mid-task.
+    await db.delete(stack)
     await db.commit()
 
-    background_tasks.add_task(_delete_stack, stack_id, name, namespace, spec)
+    background_tasks.add_task(_delete_namespace, namespace, name)
