@@ -11,10 +11,11 @@ SERVICES = {
     },
     "kafka": {
         "name": "Apache Kafka",
-        "description": "Distributed event streaming (KRaft mode)",
+        "description": "Distributed event streaming + Kafka UI (web console)",
         "icon": "stream",
         "dependencies": [],
-        "defaults": {"brokers": 1, "cpu": "2", "memory": "4Gi", "storage": "20Gi"},
+        "includes": ["kafka-ui"],
+        "defaults": {"brokers": 1, "ui": True, "cpu": "2", "memory": "4Gi", "storage": "20Gi"},
         "limits": {"brokers": {"min": 1, "max": 3}, "cpu": {"min": 1, "max": 8}, "memory": {"min": "2Gi", "max": "16Gi"}},
     },
     "postgres": {

@@ -1,0 +1,77 @@
+# Пример ручного деплоя Kafka UI в namespace стека
+# Применение (когда Kafka уже создана Strimzi):
+#   kubectl apply -f deploy/kafka-ui/manifest.yaml -n stack-XXXX
+#
+# Замените:
+#   STACK_NS     → namespace стека (stack-abc123)
+#   STACK_NAME   → имя стека
+#   BASE_DOMAIN  → 192.168.31.195.nip.io
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kafka-ui
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kafka-ui
+  template:
+    metadata:
+      labels:
+        app: kafka-ui
+    spec:
+      containers:
+        - name: kafka-ui
+          image: provectuslabs/kafka-ui:v0.7.2
+          ports:
+            - containerPort: 8080
+          env:
+            - name: KAFKA_CLUSTERS_0_NAME
+              value: "dwh"
+            - name: KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS
+              value: "kafka-kafka-bootstrap:9092"
+            - name: DYNAMIC_CONFIG_ENABLED
+              value: "true"
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kafka-ui
+spec:
+  selector:
+    app: kafka-ui
+  ports:
+    - port: 8080
+      targetPort: 8080
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: kafka-ui
+  annotations:
+    cert-manager.io/cluster-issuer: selfsigned-issuer
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - STACK_NAME-kafka-ui.192.168.31.195.nip.io
+      secretName: kafka-ui-tls
+  rules:
+    - host: STACK_NAME-kafka-ui.192.168.31.195.nip.io
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: kafka-ui
+                port:
+                  number: 8080

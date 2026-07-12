@@ -19,6 +19,7 @@ def _get_k8s_clients():
         config.load_kube_config()
     return (
         client.CoreV1Api(),
+        client.AppsV1Api(),
         client.RbacAuthorizationV1Api(),
         client.NetworkingV1Api(),
         client.CustomObjectsApi(),
@@ -39,7 +40,7 @@ class StackProvisioner:
         self.namespace = f"stack-{stack_id[:8]}"
         self.spec = spec
         self.base_domain = settings.ingress_base_domain
-        self.core, self.rbac, self.net, self.custom = _get_k8s_clients()
+        self.core, self.apps, self.rbac, self.net, self.custom = _get_k8s_clients()
 
     async def deploy(self) -> dict:
         await asyncio.to_thread(self._create_namespace)
@@ -59,7 +60,11 @@ class StackProvisioner:
 
         if self._enabled("kafka"):
             await asyncio.to_thread(self._deploy_kafka)
-            endpoints["kafka"] = f"{self.name}-kafka.{self.namespace}.svc.cluster.local:9092"
+            endpoints["kafka"] = f"kafka-kafka-bootstrap.{self.namespace}.svc.cluster.local:9092"
+            if self.spec.get("kafka", {}).get("ui", True):
+                await asyncio.to_thread(self._deploy_kafka_ui)
+                endpoints["kafka_ui"] = f"https://{self.name}-kafka-ui.{self.base_domain}"
+
 
         if self._enabled("airflow"):
             await asyncio.to_thread(self._deploy_airflow)
@@ -188,7 +193,7 @@ class StackProvisioner:
                 selector=labels, ports=[client.V1ServicePort(port=6379, target_port=6379)]
             ),
         )
-        self.core.create_namespaced_deployment(self.namespace, dep)
+        self.apps.create_namespaced_deployment(self.namespace, dep)
         self.core.create_namespaced_service(self.namespace, svc)
 
     def _deploy_clickhouse(self):
@@ -294,6 +299,91 @@ class StackProvisioner:
             "kafka.strimzi.io", "v1beta2", self.namespace, "kafkas", kafka
         )
 
+    def _deploy_kafka_ui(self):
+        """Kafka UI (provectuslabs) — web console for topics/consumers."""
+        labels = {"app": "kafka-ui"}
+        bootstrap = f"kafka-kafka-bootstrap.{self.namespace}.svc.cluster.local:9092"
+        dep = client.V1Deployment(
+            metadata=client.V1ObjectMeta(name="kafka-ui", namespace=self.namespace),
+            spec=client.V1DeploymentSpec(
+                replicas=1,
+                selector=client.V1LabelSelector(match_labels=labels),
+                template=client.V1PodTemplateSpec(
+                    metadata=client.V1ObjectMeta(labels=labels),
+                    spec=client.V1PodSpec(
+                        containers=[
+                            client.V1Container(
+                                name="kafka-ui",
+                                image="provectuslabs/kafka-ui:v0.7.2",
+                                ports=[client.V1ContainerPort(container_port=8080)],
+                                env=[
+                                    client.V1EnvVar(name="KAFKA_CLUSTERS_0_NAME", value=self.name),
+                                    client.V1EnvVar(name="KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS", value=bootstrap),
+                                    client.V1EnvVar(name="DYNAMIC_CONFIG_ENABLED", value="true"),
+                                ],
+                                resources=client.V1ResourceRequirements(
+                                    requests={"cpu": "100m", "memory": "256Mi"},
+                                    limits={"cpu": "500m", "memory": "512Mi"},
+                                ),
+                            )
+                        ]
+                    ),
+                ),
+            ),
+        )
+        svc = client.V1Service(
+            metadata=client.V1ObjectMeta(name="kafka-ui", namespace=self.namespace),
+            spec=client.V1ServiceSpec(
+                selector=labels, ports=[client.V1ServicePort(port=8080, target_port=8080)]
+            ),
+        )
+        host = f"{self.name}-kafka-ui.{self.base_domain}"
+        ingress = client.V1Ingress(
+            metadata=client.V1ObjectMeta(
+                name="kafka-ui",
+                namespace=self.namespace,
+                annotations={"cert-manager.io/cluster-issuer": "selfsigned-issuer"},
+            ),
+            spec=client.V1IngressSpec(
+                ingress_class_name="nginx",
+                tls=[client.V1IngressTLS(hosts=[host], secret_name="kafka-ui-tls")],
+                rules=[
+                    client.V1IngressRule(
+                        host=host,
+                        http=client.V1HTTPIngressRuleValue(
+                            paths=[
+                                client.V1HTTPIngressPath(
+                                    path="/",
+                                    path_type="Prefix",
+                                    backend=client.V1IngressBackend(
+                                        service=client.V1IngressServiceBackend(
+                                            name="kafka-ui",
+                                            port=client.V1ServiceBackendPort(number=8080),
+                                        )
+                                    ),
+                                )
+                            ]
+                        ),
+                    )
+                ],
+            ),
+        )
+        try:
+            self.apps.create_namespaced_deployment(self.namespace, dep)
+        except ApiException as e:
+            if e.status != 409:
+                raise
+        try:
+            self.core.create_namespaced_service(self.namespace, svc)
+        except ApiException as e:
+            if e.status != 409:
+                raise
+        try:
+            self.net.create_namespaced_ingress(self.namespace, ingress)
+        except ApiException as e:
+            if e.status != 409:
+                raise
+
     def _deploy_airflow(self):
         cfg = self.spec.get("airflow", {})
         res = cfg.get("resources", {})
@@ -373,7 +463,7 @@ class StackProvisioner:
                 ],
             ),
         )
-        self.core.create_namespaced_deployment(self.namespace, dep)
+        self.apps.create_namespaced_deployment(self.namespace, dep)
         self.core.create_namespaced_service(self.namespace, svc)
         self.net.create_namespaced_ingress(self.namespace, ingress)
 
@@ -416,5 +506,5 @@ class StackProvisioner:
                 selector=labels, ports=[client.V1ServicePort(port=8088, target_port=8088)]
             ),
         )
-        self.core.create_namespaced_deployment(self.namespace, dep)
+        self.apps.create_namespaced_deployment(self.namespace, dep)
         self.core.create_namespaced_service(self.namespace, svc)

@@ -16,6 +16,7 @@ class ClickHouseConfig(BaseModel):
 class KafkaConfig(BaseModel):
     enabled: bool = False
     brokers: int = Field(default=1, ge=1, le=3)
+    ui: bool = True  # Kafka UI (provectuslabs) — включается вместе с Kafka
     resources: ServiceResources = ServiceResources(cpu="2", memory="4Gi", storage="20Gi")
 
 
