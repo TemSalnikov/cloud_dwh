@@ -1,0 +1,71 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: platform-ui
+  labels:
+    app: platform-ui
+spec:
+  replicas: {{ .Values.platformUi.replicaCount }}
+  selector:
+    matchLabels:
+      app: platform-ui
+  template:
+    metadata:
+      labels:
+        app: platform-ui
+    spec:
+      containers:
+        - name: ui
+          image: "{{ .Values.platformUi.image.repository }}:{{ .Values.platformUi.image.tag }}"
+          imagePullPolicy: {{ .Values.platformUi.image.pullPolicy }}
+          ports:
+            - containerPort: 80
+          env:
+            - name: API_URL
+              value: "http://platform-api:8000"
+          resources:
+            {{- toYaml .Values.platformUi.resources | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: platform-ui
+spec:
+  selector:
+    app: platform-ui
+  ports:
+    - port: 80
+      targetPort: 80
+{{- if .Values.ingress.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: platform
+  annotations:
+    cert-manager.io/cluster-issuer: selfsigned-issuer
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  tls:
+    - hosts:
+        - {{ .Values.ingress.host }}
+      secretName: platform-tls
+  rules:
+    - host: {{ .Values.ingress.host }}
+      http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: platform-api
+                port:
+                  number: 8000
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: platform-ui
+                port:
+                  number: 80
+{{- end }}

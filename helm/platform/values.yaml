@@ -1,0 +1,63 @@
+postgresql:
+  enabled: true
+  auth:
+    username: platform
+    password: platform
+    database: platform
+  primary:
+    persistence:
+      size: 5Gi
+    resources:
+      requests:
+        cpu: 250m
+        memory: 512Mi
+
+redis:
+  enabled: true
+  architecture: standalone
+  master:
+    persistence:
+      enabled: false
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+
+platformApi:
+  image:
+    repository: cloud-dwh/platform-api
+    tag: "0.1.0"
+    pullPolicy: IfNotPresent
+  replicaCount: 1
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+  env:
+    DATABASE_URL: "postgresql://platform:platform@platform-postgresql:5432/platform"
+    REDIS_URL: "redis://platform-redis-master:6379/0"
+    KUBECONFIG_IN_CLUSTER: "true"
+    HELM_CHARTS_PATH: "/charts/stacks"
+
+platformUi:
+  image:
+    repository: cloud-dwh/platform-ui
+    tag: "0.1.0"
+    pullPolicy: IfNotPresent
+  replicaCount: 1
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+
+ingress:
+  enabled: true
+  className: nginx
+  host: platform.192.168.31.195.nip.io
+  tls: true
+
+# IP сервера с Kubernetes
+server:
+  ip: 192.168.31.195
+  apiServer: https://192.168.31.195:6443
+  baseDomain: 192.168.31.195.nip.io

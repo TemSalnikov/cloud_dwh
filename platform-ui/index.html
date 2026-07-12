@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Cloud DWH Platform</title>
+  <style>
+    :root {
+      --bg: #0f1419;
+      --surface: #1a2332;
+      --border: #2d3a4f;
+      --text: #e7ecf3;
+      --muted: #8b9cb3;
+      --accent: #3b82f6;
+      --accent-hover: #2563eb;
+      --success: #22c55e;
+      --warning: #f59e0b;
+      --danger: #ef4444;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+    }
+    header {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 1rem 2rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    header h1 { font-size: 1.25rem; font-weight: 600; }
+    .quota-bar {
+      display: flex;
+      gap: 1.5rem;
+      font-size: 0.875rem;
+      color: var(--muted);
+    }
+    .quota-bar span strong { color: var(--text); }
+    main { max-width: 1200px; margin: 0 auto; padding: 2rem; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 2rem; }
+    @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 1.5rem;
+    }
+    .card h2 { font-size: 1rem; margin-bottom: 1rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+    label { display: block; font-size: 0.875rem; margin-bottom: 0.25rem; color: var(--muted); }
+    input, select {
+      width: 100%;
+      padding: 0.625rem 0.75rem;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text);
+      font-size: 0.875rem;
+      margin-bottom: 1rem;
+    }
+    .service-item {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 1rem;
+      margin-bottom: 0.75rem;
+      transition: border-color 0.2s;
+    }
+    .service-item.enabled { border-color: var(--accent); }
+    .service-header {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      cursor: pointer;
+    }
+    .service-header input[type=checkbox] { width: auto; margin: 0; }
+    .service-header h3 { font-size: 0.9375rem; flex: 1; }
+    .service-config {
+      display: none;
+      margin-top: 1rem;
+      padding-top: 1rem;
+      border-top: 1px solid var(--border);
+    }
+    .service-item.enabled .service-config { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0.75rem; }
+    .preset-buttons { display: flex; gap: 0.5rem; margin-bottom: 1rem; flex-wrap: wrap; }
+    .preset-btn {
+      padding: 0.5rem 1rem;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text);
+      cursor: pointer;
+      font-size: 0.8125rem;
+    }
+    .preset-btn:hover, .preset-btn.active { border-color: var(--accent); background: rgba(59,130,246,0.1); }
+    button.primary {
+      width: 100%;
+      padding: 0.75rem;
+      background: var(--accent);
+      color: white;
+      border: none;
+      border-radius: 8px;
+      font-size: 0.9375rem;
+      font-weight: 500;
+      cursor: pointer;
+      margin-top: 1rem;
+    }
+    button.primary:hover { background: var(--accent-hover); }
+    button.primary:disabled { opacity: 0.5; cursor: not-allowed; }
+    .stack-list { list-style: none; }
+    .stack-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 0.75rem 0;
+      border-bottom: 1px solid var(--border);
+    }
+    .stack-item:last-child { border-bottom: none; }
+    .status {
+      font-size: 0.75rem;
+      padding: 0.25rem 0.5rem;
+      border-radius: 4px;
+      text-transform: uppercase;
+    }
+    .status.running { background: rgba(34,197,94,0.2); color: var(--success); }
+    .status.pending, .status.deploying { background: rgba(245,158,11,0.2); color: var(--warning); }
+    .status.failed { background: rgba(239,68,68,0.2); color: var(--danger); }
+    .message { padding: 0.75rem; border-radius: 8px; margin-top: 1rem; font-size: 0.875rem; }
+    .message.error { background: rgba(239,68,68,0.15); color: var(--danger); }
+    .message.success { background: rgba(34,197,94,0.15); color: var(--success); }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Cloud DWH Platform</h1>
+    <div class="quota-bar" id="quota"></div>
+  </header>
+  <main>
+    <div class="grid">
+      <div class="card">
+        <h2>Новый стек</h2>
+        <label for="stack-name">Имя стека</label>
+        <input id="stack-name" placeholder="my-analytics" pattern="[a-z][a-z0-9-]*">
+
+        <label>Preset</label>
+        <div class="preset-buttons" id="presets"></div>
+
+        <div id="services"></div>
+
+        <button class="primary" id="deploy-btn" onclick="deployStack()">Развернуть стек</button>
+        <div id="message"></div>
+      </div>
+
+      <div class="card">
+        <h2>Активные стеки</h2>
+        <ul class="stack-list" id="stacks"></ul>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    const API = window.API_URL || '/api/v1';
+    let catalog = { services: {}, presets: {} };
+    let selectedPreset = null;
+
+    async function fetchJSON(url, opts) {
+      const r = await fetch(API + url, opts);
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({}));
+        throw new Error(err.detail || r.statusText);
+      }
+      if (r.status === 204) return null;
+      return r.json();
+    }
+
+    async function loadQuota() {
+      const q = await fetchJSON('/quota');
+      document.getElementById('quota').innerHTML = `
+        <span>CPU: <strong>${q.used.cpu.toFixed(1)}</strong> / ${q.cluster.total_cpu}</span>
+        <span>RAM: <strong>${q.used.memory}</strong> / ${q.cluster.total_memory}</span>
+        <span>Стеков: <strong>${q.active_stacks}</strong></span>
+      `;
+    }
+
+    function renderPresets() {
+      const el = document.getElementById('presets');
+      el.innerHTML = Object.entries(catalog.presets).map(([k, p]) =>
+        `<button class="preset-btn" onclick="applyPreset('${k}')">${p.name}</button>`
+      ).join('') + `<button class="preset-btn" onclick="clearPreset()">Custom</button>`;
+    }
+
+    function renderServices() {
+      const el = document.getElementById('services');
+      el.innerHTML = Object.entries(catalog.services).map(([key, svc]) => `
+        <div class="service-item" id="svc-${key}">
+          <div class="service-header" onclick="toggleService('${key}')">
+            <input type="checkbox" id="chk-${key}" onclick="event.stopPropagation(); toggleService('${key}')">
+            <h3>${svc.name}</h3>
+          </div>
+          <div class="service-config">
+            ${key === 'clickhouse' ? `<div><label>Replicas</label><input type="number" id="${key}-replicas" value="${svc.defaults.replicas||1}" min="1" max="4"></div>` : ''}
+            ${key === 'kafka' ? `<div><label>Brokers</label><input type="number" id="${key}-brokers" value="${svc.defaults.brokers||1}" min="1" max="3"></div>` : ''}
+            ${key === 'airflow' ? `<div><label>Workers</label><input type="number" id="${key}-workers" value="${svc.defaults.workers||1}" min="1" max="8"></div>` : ''}
+            <div><label>CPU</label><input id="${key}-cpu" value="${svc.defaults.cpu}"></div>
+            <div><label>Memory</label><input id="${key}-memory" value="${svc.defaults.memory}"></div>
+            ${svc.defaults.storage ? `<div><label>Storage</label><input id="${key}-storage" value="${svc.defaults.storage}"></div>` : ''}
+          </div>
+        </div>
+      `).join('');
+    }
+
+    function toggleService(key) {
+      const chk = document.getElementById('chk-' + key);
+      chk.checked = !chk.checked;
+      document.getElementById('svc-' + key).classList.toggle('enabled', chk.checked);
+      selectedPreset = null;
+      document.querySelectorAll('.preset-btn').forEach(b => b.classList.remove('active'));
+    }
+
+    function applyPreset(key) {
+      selectedPreset = key;
+      document.querySelectorAll('.preset-btn').forEach(b => b.classList.remove('active'));
+      event.target.classList.add('active');
+      const preset = catalog.presets[key].services;
+      for (const [svc, cfg] of Object.entries(catalog.services)) {
+        const enabled = preset[svc]?.enabled || false;
+        document.getElementById('chk-' + svc).checked = enabled;
+        document.getElementById('svc-' + svc).classList.toggle('enabled', enabled);
+        if (enabled && preset[svc]) {
+          const p = preset[svc];
+          if (p.replicas) document.getElementById(svc + '-replicas').value = p.replicas;
+          if (p.brokers) document.getElementById(svc + '-brokers').value = p.brokers;
+          if (p.workers) document.getElementById(svc + '-workers').value = p.workers;
+          if (p.resources) {
+            document.getElementById(svc + '-cpu').value = p.resources.cpu;
+            document.getElementById(svc + '-memory').value = p.resources.memory;
+            if (p.resources.storage) document.getElementById(svc + '-storage').value = p.resources.storage;
+          }
+        }
+      }
+    }
+
+    function clearPreset() {
+      selectedPreset = null;
+      document.querySelectorAll('.preset-btn').forEach(b => b.classList.remove('active'));
+    }
+
+    function buildSpec() {
+      const spec = {};
+      for (const key of Object.keys(catalog.services)) {
+        const enabled = document.getElementById('chk-' + key).checked;
+        spec[key] = { enabled };
+        if (enabled) {
+          spec[key].resources = {
+            cpu: document.getElementById(key + '-cpu').value,
+            memory: document.getElementById(key + '-memory').value,
+          };
+          const storage = document.getElementById(key + '-storage');
+          if (storage) spec[key].resources.storage = storage.value;
+          const replicas = document.getElementById(key + '-replicas');
+          if (replicas) spec[key].replicas = parseInt(replicas.value);
+          const brokers = document.getElementById(key + '-brokers');
+          if (brokers) spec[key].brokers = parseInt(brokers.value);
+          const workers = document.getElementById(key + '-workers');
+          if (workers) spec[key].workers = parseInt(workers.value);
+        }
+      }
+      return spec;
+    }
+
+    async function deployStack() {
+      const name = document.getElementById('stack-name').value.trim();
+      const msg = document.getElementById('message');
+      msg.innerHTML = '';
+      if (!name.match(/^[a-z][a-z0-9-]*$/)) {
+        msg.innerHTML = '<div class="message error">Имя: lowercase, начинается с буквы, a-z0-9-</div>';
+        return;
+      }
+      const btn = document.getElementById('deploy-btn');
+      btn.disabled = true;
+      try {
+        const body = selectedPreset
+          ? { name, preset: selectedPreset }
+          : { name, services: buildSpec() };
+        await fetchJSON('/stacks', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        msg.innerHTML = '<div class="message success">Стек создаётся. Статус обновится автоматически.</div>';
+        document.getElementById('stack-name').value = '';
+        loadStacks();
+        loadQuota();
+      } catch (e) {
+        msg.innerHTML = `<div class="message error">${e.message}</div>`;
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    async function loadStacks() {
+      const stacks = await fetchJSON('/stacks');
+      document.getElementById('stacks').innerHTML = stacks.length
+        ? stacks.map(s => `
+          <li class="stack-item">
+            <div>
+              <strong>${s.name}</strong>
+              <div style="font-size:0.75rem;color:var(--muted)">${s.namespace}</div>
+              ${s.endpoints ? Object.entries(s.endpoints).map(([k,v]) =>
+                `<div style="font-size:0.75rem"><a href="${v.startsWith('http')?v:'#'}" style="color:var(--accent)">${k}</a></div>`
+              ).join('') : ''}
+            </div>
+            <span class="status ${s.status}">${s.status}</span>
+          </li>
+        `).join('')
+        : '<li style="color:var(--muted)">Нет активных стеков</li>';
+    }
+
+    async function init() {
+      catalog = await fetchJSON('/services');
+      renderPresets();
+      renderServices();
+      loadQuota();
+      loadStacks();
+      setInterval(() => { loadStacks(); loadQuota(); }, 10000);
+    }
+    init();
+  </script>
+</body>
+</html>

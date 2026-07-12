@@ -1,0 +1,42 @@
+# Локальная разработка platform-api без Kubernetes
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: platform
+      POSTGRES_PASSWORD: platform
+      POSTGRES_DB: platform
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+  platform-api:
+    build: ./platform-api
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql+asyncpg://platform:platform@postgres:5432/platform
+      REDIS_URL: redis://redis:6379/0
+      KUBECONFIG_IN_CLUSTER: "false"
+    volumes:
+      - ${HOME}/.kube:/root/.kube:ro
+    depends_on:
+      - postgres
+      - redis
+
+  platform-ui:
+    build: ./platform-ui
+    ports:
+      - "3000:80"
+    depends_on:
+      - platform-api
+
+volumes:
+  pgdata:
