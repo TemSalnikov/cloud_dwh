@@ -61,13 +61,21 @@ rsync -avz \
   "$REPO_ROOT/scripts/download-vendor.sh" \
   "${SERVER_USER}@${SERVER_IP}:${REPO_DIR}/scripts/"
 
-ssh "${SERVER_USER}@${SERVER_IP}" "mkdir -p ${REPO_DIR}/deploy/ingress-nginx"
+ssh "${SERVER_USER}@${SERVER_IP}" "mkdir -p ${REPO_DIR}/deploy/ingress-nginx ${REPO_DIR}/deploy/strimzi"
 rsync -avz \
   "$REPO_ROOT/deploy/ingress-nginx/" \
   "${SERVER_USER}@${SERVER_IP}:${REPO_DIR}/deploy/ingress-nginx/"
 rsync -avz \
+  "$REPO_ROOT/deploy/strimzi/" \
+  "${SERVER_USER}@${SERVER_IP}:${REPO_DIR}/deploy/strimzi/"
+rsync -avz \
   "$REPO_ROOT/deploy/server.env" \
-  "${SERVER_USER}@${SERVER_IP}:${REPO_DIR}/deploy/server.env"
+  "$REPO_ROOT/deploy/vendor/versions.env" \
+  "${SERVER_USER}@${SERVER_IP}:${REPO_DIR}/deploy/"
+# vendor charts (incl. new strimzi 0.48)
+rsync -avz \
+  "$REPO_ROOT/deploy/vendor/charts/" \
+  "${SERVER_USER}@${SERVER_IP}:${REPO_DIR}/deploy/vendor/charts/"
 
 log ""
 log "=== Передача завершена ==="
