@@ -54,12 +54,20 @@ rsync -avz \
   "$REPO_ROOT/helm/platform/Chart.lock" \
   "${SERVER_USER}@${SERVER_IP}:${REPO_DIR}/helm/platform/Chart.lock"
 
-log "4/4 scripts/ (обновлённые bootstrap, verify)..."
+log "4/4 scripts/ + deploy configs..."
 rsync -avz \
   "$REPO_ROOT/scripts/bootstrap.sh" \
   "$REPO_ROOT/scripts/verify-offline-bundle.sh" \
   "$REPO_ROOT/scripts/download-vendor.sh" \
   "${SERVER_USER}@${SERVER_IP}:${REPO_DIR}/scripts/"
+
+ssh "${SERVER_USER}@${SERVER_IP}" "mkdir -p ${REPO_DIR}/deploy/ingress-nginx"
+rsync -avz \
+  "$REPO_ROOT/deploy/ingress-nginx/" \
+  "${SERVER_USER}@${SERVER_IP}:${REPO_DIR}/deploy/ingress-nginx/"
+rsync -avz \
+  "$REPO_ROOT/deploy/server.env" \
+  "${SERVER_USER}@${SERVER_IP}:${REPO_DIR}/deploy/server.env"
 
 log ""
 log "=== Передача завершена ==="

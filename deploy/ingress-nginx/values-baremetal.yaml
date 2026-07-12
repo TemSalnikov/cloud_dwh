@@ -1,0 +1,16 @@
+# Values for ingress-nginx on bare-metal single-node (no cloud LB)
+# LoadBalancer EXTERNAL-IP stays <pending> forever → helm --wait times out.
+# hostNetwork: bind ports 80/443 directly on node1 IP.
+
+controller:
+  hostNetwork: true
+  dnsPolicy: ClusterFirstWithHostNet
+  kind: DaemonSet
+  service:
+    type: ClusterIP
+  resources:
+    requests:
+      cpu: 200m
+      memory: 256Mi
+  admissionWebhooks:
+    enabled: true

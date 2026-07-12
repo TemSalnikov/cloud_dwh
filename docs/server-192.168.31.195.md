@@ -343,7 +343,8 @@ sudo bash scripts/bootstrap.sh
 | Симптом | Где смотреть | Решение (на node1) |
 |---------|--------------|-------------------|
 | `Missing: helm` | локальная машина | Не запускайте bootstrap локально — только на node1 |
-| `context deadline exceeded` (strimzi/GitHub) | node1 без VPN | **ЛОКАЛЬНАЯ:** `pack-offline-bundle.sh` → `sync-offline-bundle.sh` |
+| `context deadline exceeded` на ingress-nginx | Helm ждёт LoadBalancer EXTERNAL-IP (на bare-metal его нет) | Уже исправлено: hostNetwork. Пересинхронизируйте bootstrap и перезапустите |
+| Helm release `failed`, pod Running | То же — timeout на LB | `helm upgrade` с `values-baremetal.yaml` (сделано автоматически в bootstrap) |
 | `Offline-пакет неполный` | node1 | Сначала sync-offline-bundle с локальной машины |
 | `Unable to connect to server` | node1 | `export KUBECONFIG=/etc/kubernetes/admin.conf` |
 | `ImagePullBackOff` | node1 | `sudo bash /home/user/dev/cloud_dwh/scripts/configure-registry.sh` |

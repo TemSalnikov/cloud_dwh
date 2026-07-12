@@ -103,10 +103,10 @@ log "Installing local-path-provisioner..."
 kubectl_apply_local "${MANIFESTS_DIR}/local-path-storage.yaml"
 kubectl annotate storageclass local-path storageclass.kubernetes.io/is-default-class=true --overwrite 2>/dev/null || true
 
-log "Installing nginx-ingress..."
+log "Installing nginx-ingress (bare-metal: hostNetwork 80/443, no LoadBalancer)..."
+# Важно: type=LoadBalancer на bare-metal → EXTERNAL-IP forever <pending> → helm --wait timeout
 helm_install_local ingress-nginx ingress-nginx ingress-nginx \
-  --set controller.resources.requests.cpu=200m \
-  --set controller.resources.requests.memory=256Mi
+  -f "$REPO_ROOT/deploy/ingress-nginx/values-baremetal.yaml"
 
 log "Installing cert-manager..."
 helm_install_local cert-manager cert-manager cert-manager \
