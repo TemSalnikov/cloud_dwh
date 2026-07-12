@@ -124,12 +124,16 @@ kubectl wait --for=condition=available deployment/clickhouse-operator -n kube-sy
 log "Installing Strimzi Kafka Operator..."
 helm_install_local strimzi strimzi-kafka-operator strimzi \
   --set resources.requests.cpu=200m \
-  --set resources.requests.memory=512Mi
+  --set resources.requests.memory=256Mi \
+  --set resources.limits.cpu=1000m \
+  --set resources.limits.memory=512Mi
 
 log "Installing CloudNativePG Operator..."
 helm_install_local cnpg cloudnative-pg cnpg-system \
   --set resources.requests.cpu=100m \
-  --set resources.requests.memory=256Mi
+  --set resources.requests.memory=256Mi \
+  --set resources.limits.cpu=500m \
+  --set resources.limits.memory=512Mi
 
 log "Installing kube-prometheus-stack..."
 helm_install_local monitoring kube-prometheus-stack monitoring \
