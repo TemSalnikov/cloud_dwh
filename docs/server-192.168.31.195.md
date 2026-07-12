@@ -171,7 +171,36 @@ chmod +x scripts/*.sh
 
 ---
 
-### Фаза 1 — Инструменты (node1, ~5 мин)
+### Фаза 1.5 — Offline-пакеты (важно при медленном интернете)
+
+Helm charts скачиваются с GitHub — на node1 часто **timeout**.  
+Решение: локальные пакеты в `deploy/vendor/`.
+
+**Вариант A — vendor уже в репозитории (git pull):**
+
+```bash
+# NODE1
+cd /home/user/dev/cloud_dwh
+git pull
+ls deploy/vendor/charts/    # должны быть .tgz файлы
+```
+
+**Вариант B — скачать на машине с интернетом и скопировать:**
+
+```bash
+# МАШИНА С ИНТЕРНЕТОМ
+cd /path/to/cloud_dwh
+bash scripts/download-vendor.sh
+
+# Скопировать на node1
+rsync -avz deploy/vendor/ user@192.168.31.195:/home/user/dev/cloud_dwh/deploy/vendor/
+```
+
+**Зачем:** bootstrap установит charts из `deploy/vendor/` без обращения к GitHub.
+
+---
+
+### Фаза 2 — Инструменты (node1, ~5 мин)
 
 ```bash
 # NODE1
@@ -192,7 +221,7 @@ docker ps | grep registry
 
 ---
 
-### Фаза 2 — Образы platform (node1, ~5 мин)
+### Фаза 3 — Образы platform (node1, ~5 мин)
 
 ```bash
 # NODE1
@@ -204,7 +233,7 @@ sudo bash /home/user/dev/cloud_dwh/scripts/configure-registry.sh
 
 ---
 
-### Фаза 3 — Bootstrap платформы (node1, ~15 мин)
+### Фаза 4 — Bootstrap платформы (node1, ~15 мин)
 
 ```bash
 # NODE1
@@ -225,7 +254,7 @@ kubectl get ingress -A
 
 ---
 
-### Фаза 4 — Первый стек (браузер на любой машине)
+### Фаза 5 — Первый стек (браузер на любой машине)
 
 1. Открыть https://platform.192.168.31.195.nip.io
 2. Имя стека: `analytics-dev`
@@ -304,7 +333,7 @@ sudo bash scripts/bootstrap.sh
 | Симптом | Где смотреть | Решение (на node1) |
 |---------|--------------|-------------------|
 | `Missing: helm` | локальная машина | Не запускайте bootstrap локально — только на node1 |
-| `Missing: helm` | node1 | `sudo bash /home/user/dev/cloud_dwh/scripts/setup-node1.sh` |
+| `context deadline exceeded` (helm/GitHub) | node1 | Скопировать `deploy/vendor/` — см. Фаза 1.5 |
 | `Unable to connect to server` | node1 | `export KUBECONFIG=/etc/kubernetes/admin.conf` |
 | `ImagePullBackOff` | node1 | `sudo bash /home/user/dev/cloud_dwh/scripts/configure-registry.sh` |
 | `Pending` PVC | node1 | `kubectl get sc` — нужен StorageClass `local-path` |

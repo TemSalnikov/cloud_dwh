@@ -22,9 +22,14 @@ Self-service платформа для развёртывания DWH-стека
 # NODE1 — всё на сервере (проект: /home/user/dev/cloud_dwh)
 ssh user@192.168.31.195
 cd /home/user/dev/cloud_dwh
+chmod +x scripts/*.sh
+
+# Offline-пакеты (обязательно при медленном интернете / timeout GitHub)
+ls deploy/vendor/charts/*.tgz || bash scripts/download-vendor.sh
+
 sudo bash scripts/setup-node1.sh      # kubectl, helm, docker, registry
 sudo bash scripts/build-images.sh    # образы platform-api/ui
-sudo bash scripts/bootstrap.sh       # ingress, operators, platform
+sudo bash scripts/bootstrap.sh       # ingress, operators, platform (из vendor/)
 ```
 
 ## Архитектура
