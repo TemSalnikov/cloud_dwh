@@ -36,6 +36,7 @@ rsync -avz \
 
 rsync -avz \
   "$REPO_ROOT/scripts/load-platform-images.sh" \
+  "$REPO_ROOT/scripts/cleanup-platform.sh" \
   "$REPO_ROOT/scripts/bootstrap.sh" \
   "${SERVER_USER}@${SERVER_IP}:${REPO_DIR}/scripts/"
 

@@ -163,19 +163,65 @@ log "Installing kube-prometheus-stack..."
 helm_install_local monitoring kube-prometheus-stack monitoring \
   -f "$REPO_ROOT/deploy/monitoring/values-minimal.yaml"
 
-log "Installing platform control plane..."
-if release_deployed platform platform; then
-  log "Skip platform — already deployed"
-else
+cleanup_platform() {
+  log "Cleaning up failed/partial platform install..."
+  helm uninstall platform -n platform 2>/dev/null || true
+  kubectl delete statefulset,deployment,service,ingress -n platform \
+    -l app.kubernetes.io/instance=platform --timeout=60s 2>/dev/null || true
+  # Остатки от старого bitnami subchart
+  kubectl delete statefulset platform-redis-master platform-redis-replicas \
+    -n platform --timeout=30s 2>/dev/null || true
+  kubectl delete service platform-redis-master platform-redis-replicas \
+    platform-redis-headless platform-postgresql-hl \
+    -n platform 2>/dev/null || true
+  kubectl delete pvc -n platform \
+    -l app.kubernetes.io/instance=platform --timeout=30s 2>/dev/null || true
+  kubectl delete pvc redis-data-platform-redis-master-0 \
+    redis-data-platform-redis-replicas-0 \
+    -n platform 2>/dev/null || true
+  kubectl delete secret platform-postgresql platform-redis \
+    -n platform 2>/dev/null || true
+  sleep 3
+}
+
+install_platform() {
+  # Удалить старые bitnami charts если остались на node1
+  rm -rf "$REPO_ROOT/helm/platform/charts" "$REPO_ROOT/helm/platform/Chart.lock" 2>/dev/null || true
+
+  local status
+  status=$(helm status platform -n platform 2>/dev/null | awk '/^STATUS:/{print $2}' || echo "none")
+
+  if [[ "$status" == "deployed" ]]; then
+    log "Skip platform — already deployed"
+    kubectl get pods -n platform
+    return 0
+  fi
+
+  if [[ "$status" != "none" && "$status" != "deployed" ]]; then
+    cleanup_platform
+  elif kubectl get statefulset platform-redis-master -n platform &>/dev/null; then
+    log "Found old bitnami redis — cleaning up..."
+    cleanup_platform
+  fi
+
+  log "Installing platform control plane..."
   helm upgrade --install platform "$REPO_ROOT/helm/platform" \
-    --namespace platform \
+    --namespace platform --create-namespace \
     -f "$REPO_ROOT/helm/platform/values.yaml" \
-    --wait --timeout "$HELM_TIMEOUT" || {
-      log "WARN: platform helm wait failed — check pods:"
-      kubectl get pods -n platform
-      die "platform install failed"
-    }
-fi
+    --wait --timeout "$HELM_TIMEOUT"
+
+  log "Waiting for platform-api (postgres must be ready first)..."
+  kubectl wait --for=condition=ready pod -l app=platform-postgresql -n platform --timeout=3m
+  kubectl rollout restart deployment/platform-api -n platform 2>/dev/null || true
+  kubectl wait --for=condition=ready pod -l app=platform-api -n platform --timeout=3m || {
+    kubectl get pods -n platform
+    kubectl logs -n platform -l app=platform-api --tail=20 2>/dev/null || true
+    die "platform-api not ready"
+  }
+  kubectl get pods -n platform
+}
+
+install_platform
 
 log ""
 log "=== Bootstrap status ==="
