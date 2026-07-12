@@ -12,4 +12,5 @@ build/
 helm/platform/charts/
 *.tgz
 !deploy/vendor/charts/*.tgz
+!deploy/vendor/platform-charts/*.tgz
 !helm/platform/charts/*.tgz

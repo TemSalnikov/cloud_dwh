@@ -37,8 +37,8 @@ rsync -avz --delete \
   --exclude '.venv' \
   "$REPO_ROOT/" "${SERVER_USER}@${SERVER_IP}:${REPO_DIR}/"
 
-log "Done. Now on node1 run:"
-log "  ssh ${SERVER_USER}@${SERVER_IP}"
-log "  sudo bash ${REPO_DIR}/scripts/setup-node1.sh    # один раз"
-log "  sudo bash ${REPO_DIR}/scripts/build-images.sh"
-log "  sudo bash ${REPO_DIR}/scripts/bootstrap.sh"
+log "Done. Recommended offline workflow:"
+log "  LOCAL:  bash scripts/pack-offline-bundle.sh && bash scripts/sync-offline-bundle.sh"
+log "  NODE1:  sudo bash ${REPO_DIR}/scripts/setup-node1.sh"
+log "          sudo bash ${REPO_DIR}/scripts/build-images.sh"
+log "          sudo bash ${REPO_DIR}/scripts/bootstrap.sh"

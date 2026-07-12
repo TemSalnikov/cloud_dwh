@@ -16,20 +16,23 @@ Self-service платформа для развёртывания DWH-стека
 
 **Полная инструкция:** [docs/server-192.168.31.195.md](docs/server-192.168.31.195.md)
 
-Кратко:
+### ЛОКАЛЬНАЯ машина (с VPN) — скачать и передать
 
 ```bash
-# NODE1 — всё на сервере (проект: /home/user/dev/cloud_dwh)
+cd ~/dev/cloud_dwh
+bash scripts/pack-offline-bundle.sh     # скачать charts + manifests
+bash scripts/sync-offline-bundle.sh     # передать на node1
+```
+
+### NODE1 (без VPN) — установка
+
+```bash
 ssh user@192.168.31.195
 cd /home/user/dev/cloud_dwh
-chmod +x scripts/*.sh
-
-# Offline-пакеты (обязательно при медленном интернете / timeout GitHub)
-ls deploy/vendor/charts/*.tgz || bash scripts/download-vendor.sh
-
-sudo bash scripts/setup-node1.sh      # kubectl, helm, docker, registry
-sudo bash scripts/build-images.sh    # образы platform-api/ui
-sudo bash scripts/bootstrap.sh       # ingress, operators, platform (из vendor/)
+bash scripts/verify-offline-bundle.sh   # проверка пакета
+sudo bash scripts/setup-node1.sh
+sudo bash scripts/build-images.sh
+sudo bash scripts/bootstrap.sh          # 100% offline
 ```
 
 ## Архитектура

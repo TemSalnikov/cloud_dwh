@@ -171,32 +171,42 @@ chmod +x scripts/*.sh
 
 ---
 
-### Фаза 1.5 — Offline-пакеты (важно при медленном интернете)
+### Фаза 1.5 — Offline-пакеты (ОБЯЗАТЕЛЬНО — на node1 нет VPN)
 
-Helm charts скачиваются с GitHub — на node1 часто **timeout**.  
-Решение: локальные пакеты в `deploy/vendor/`.
+На node1 **нет доступа** к GitHub / strimzi.io → helm падает с `context deadline exceeded`.  
+Все charts скачиваются **на локальной машине с VPN** и передаются на node1.
 
-**Вариант A — vendor уже в репозитории (git pull):**
+```
+ЛОКАЛЬНАЯ (VPN)                         NODE1 (без VPN)
+─────────────────                        ─────────────────
+pack-offline-bundle.sh  ──rsync──►      deploy/vendor/
+  ├─ ingress-nginx.tgz                   helm/platform/charts/
+  ├─ cert-manager.tgz                    scripts/bootstrap.sh
+  ├─ strimzi-kafka-operator.tgz
+  ├─ cloudnative-pg.tgz
+  ├─ kube-prometheus-stack.tgz
+  ├─ postgresql + redis (bitnami)
+  └─ K8s manifests (yaml)
+```
+
+**На ЛОКАЛЬНОЙ машине (с VPN):**
 
 ```bash
-# NODE1
+cd ~/dev/cloud_dwh          # или /home/ubuntu/dev/cloud_dwh
+bash scripts/pack-offline-bundle.sh    # скачать + проверить (~2 мин)
+bash scripts/sync-offline-bundle.sh    # передать на node1 (~1 мин)
+```
+
+**Проверка на node1:**
+
+```bash
 cd /home/user/dev/cloud_dwh
-git pull
-ls deploy/vendor/charts/    # должны быть .tgz файлы
+bash scripts/verify-offline-bundle.sh   # должно быть OK
+ls deploy/vendor/charts/                # 5 файлов .tgz
+ls helm/platform/charts/                # postgresql + redis .tgz
 ```
 
-**Вариант B — скачать на машине с интернетом и скопировать:**
-
-```bash
-# МАШИНА С ИНТЕРНЕТОМ
-cd /path/to/cloud_dwh
-bash scripts/download-vendor.sh
-
-# Скопировать на node1
-rsync -avz deploy/vendor/ user@192.168.31.195:/home/user/dev/cloud_dwh/deploy/vendor/
-```
-
-**Зачем:** bootstrap установит charts из `deploy/vendor/` без обращения к GitHub.
+**Зачем:** bootstrap на node1 **не обращается к интернету** — только локальные файлы.
 
 ---
 
@@ -333,7 +343,8 @@ sudo bash scripts/bootstrap.sh
 | Симптом | Где смотреть | Решение (на node1) |
 |---------|--------------|-------------------|
 | `Missing: helm` | локальная машина | Не запускайте bootstrap локально — только на node1 |
-| `context deadline exceeded` (helm/GitHub) | node1 | Скопировать `deploy/vendor/` — см. Фаза 1.5 |
+| `context deadline exceeded` (strimzi/GitHub) | node1 без VPN | **ЛОКАЛЬНАЯ:** `pack-offline-bundle.sh` → `sync-offline-bundle.sh` |
+| `Offline-пакет неполный` | node1 | Сначала sync-offline-bundle с локальной машины |
 | `Unable to connect to server` | node1 | `export KUBECONFIG=/etc/kubernetes/admin.conf` |
 | `ImagePullBackOff` | node1 | `sudo bash /home/user/dev/cloud_dwh/scripts/configure-registry.sh` |
 | `Pending` PVC | node1 | `kubectl get sc` — нужен StorageClass `local-path` |

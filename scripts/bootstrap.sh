@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
 # ═══════════════════════════════════════════════════════════════
 # МАШИНА: node1 (192.168.31.195)
-# ЗАЧЕМ:  развернуть ingress, operators, monitoring, platform
-#         использует deploy/vendor/ (offline) если есть
-# ЗАПУСК: sudo bash /home/user/dev/cloud_dwh/scripts/bootstrap.sh
-# ТРЕБУЕТ: setup-node1.sh, build-images.sh, download-vendor.sh
+# ЗАЧЕМ:  развернуть платформу ТОЛЬКО из локальных пакетов (без интернета)
+# ЗАПУСК: sudo bash scripts/bootstrap.sh
+# ТРЕБУЕТ: sync-offline-bundle.sh выполнен с локальной машины
 # ═══════════════════════════════════════════════════════════════
 set -euo pipefail
 
@@ -28,10 +27,10 @@ fi
 
 SERVER_IP="${SERVER_IP:-192.168.31.195}"
 HELM_TIMEOUT="${HELM_TIMEOUT:-20m}"
+OFFLINE_ONLY="${OFFLINE_ONLY:-1}"
 
 log() { echo "[bootstrap] $*"; }
-warn() { echo "[bootstrap] WARN: $*" >&2; }
-need() { command -v "$1" >/dev/null 2>&1 || { echo "Missing: $1 — запустите scripts/setup-node1.sh"; exit 1; }; }
+die() { echo "[bootstrap] ERROR: $*" >&2; exit 1; }
 
 export PATH="/usr/local/bin:${HOME}/.local/bin:/snap/bin:${PATH}"
 
@@ -41,8 +40,27 @@ elif [[ -f /etc/kubernetes/admin.conf ]]; then
   export KUBECONFIG=/etc/kubernetes/admin.conf
 fi
 
+need() { command -v "$1" >/dev/null 2>&1 || die "Missing: $1 — запустите scripts/setup-node1.sh"; }
 need kubectl
 need helm
+
+# ── preflight: offline bundle обязателен ─────────────────────
+
+log "Checking offline bundle..."
+if ! bash "$SCRIPT_DIR/verify-offline-bundle.sh"; then
+  die "Offline-пакет неполный. На ЛОКАЛЬНОЙ машине с VPN:
+  bash scripts/pack-offline-bundle.sh
+  bash scripts/sync-offline-bundle.sh"
+fi
+
+# Восстановить platform charts из vendor если нужно
+if [[ ! -d "$REPO_ROOT/helm/platform/charts" ]] || ! ls "$REPO_ROOT/helm/platform/charts/"*.tgz &>/dev/null; then
+  if ls "$VENDOR_DIR/platform-charts/"*.tgz &>/dev/null; then
+    log "Restoring platform charts from vendor..."
+    mkdir -p "$REPO_ROOT/helm/platform/charts"
+    cp -a "$VENDOR_DIR/platform-charts/"*.tgz "$REPO_ROOT/helm/platform/charts/"
+  fi
+fi
 
 # ── helpers ──────────────────────────────────────────────────
 
@@ -53,81 +71,45 @@ find_chart() {
   [[ -n "$f" && -f "$f" ]] && echo "$f" || return 1
 }
 
-helm_install() {
-  local release="$1" chart_spec="$2" namespace="$3"
+helm_install_local() {
+  local release="$1" chart_name="$2" namespace="$3"
   shift 3
   local extra_args=("$@")
 
-  local chart_name="${chart_spec%%/*}"
-  chart_name="${chart_name##*/}"
-  chart_name="${chart_name%%:*}"
+  local chart_path
+  chart_path=$(find_chart "$chart_name") || \
+    die "Chart '$chart_name' не найден в $CHARTS_DIR — выполните sync-offline-bundle.sh с локальной машины"
 
-  local chart_path=""
-  if chart_path=$(find_chart "$chart_name"); then
-    log "Installing $release from local vendor: $chart_path"
-    helm upgrade --install "$release" "$chart_path" \
-      --namespace "$namespace" --create-namespace \
-      "${extra_args[@]}" \
-      --wait --timeout "$HELM_TIMEOUT"
-  else
-    warn "Local chart not found for $chart_name — trying online (may timeout!)"
-    warn "Run: bash scripts/download-vendor.sh"
-    local repo_name="${chart_spec%%/*}"
-    local repo_url=""
-    case "$repo_name" in
-      ingress-nginx) repo_url="$REPO_INGRESS_NGINX" ;;
-      jetstack)      repo_url="$REPO_JETSTACK" ;;
-      strimzi)       repo_url="$REPO_STRIMZI" ;;
-      cnpg)          repo_url="$REPO_CNPG" ;;
-      prometheus-community) repo_url="$REPO_PROMETHEUS" ;;
-    esac
-    [[ -n "$repo_url" ]] && helm repo add "$repo_name" "$repo_url" 2>/dev/null || true
-    helm repo update "$repo_name" 2>/dev/null || helm repo update
-    helm upgrade --install "$release" "$chart_spec" \
-      --namespace "$namespace" --create-namespace \
-      "${extra_args[@]}" \
-      --wait --timeout "$HELM_TIMEOUT"
-  fi
+  log "Installing $release ← $(basename "$chart_path")"
+  helm upgrade --install "$release" "$chart_path" \
+    --namespace "$namespace" --create-namespace \
+    "${extra_args[@]}" \
+    --wait --timeout "$HELM_TIMEOUT"
 }
 
-kubectl_apply() {
-  local manifest_file="$1" url="$2"
-  if [[ -f "$manifest_file" ]]; then
-    log "Applying local manifest: $manifest_file"
-    kubectl apply -f "$manifest_file"
-  else
-    warn "Local manifest missing: $manifest_file — trying URL"
-    warn "Run: bash scripts/download-vendor.sh"
-    kubectl apply -f "$url"
-  fi
+kubectl_apply_local() {
+  local manifest_file="$1"
+  [[ -f "$manifest_file" ]] || die "Manifest не найден: $manifest_file"
+  log "Applying $(basename "$manifest_file")"
+  kubectl apply -f "$manifest_file"
 }
 
-# ── preflight ────────────────────────────────────────────────
-
-if [[ ! -d "$CHARTS_DIR" ]] || [[ -z "$(ls -A "$CHARTS_DIR" 2>/dev/null)" ]]; then
-  warn "deploy/vendor/charts/ пуст!"
-  warn "На машине с интернетом выполните:"
-  warn "  bash scripts/download-vendor.sh"
-  warn "  rsync -avz deploy/vendor/ user@${SERVER_IP}:${REPO_ROOT}/deploy/vendor/"
-  warn "Продолжаем с online-режимом (может упасть по timeout)..."
-fi
-
-# ── install ──────────────────────────────────────────────────
+# ── install (100% offline) ───────────────────────────────────
 
 log "Creating platform namespace..."
 kubectl create namespace platform --dry-run=client -o yaml | kubectl apply -f -
 
 log "Installing local-path-provisioner..."
-kubectl_apply "${MANIFESTS_DIR}/local-path-storage.yaml" "${MANIFEST_LOCAL_PATH:-https://raw.githubusercontent.com/rancher/local-path-provisioner/v0.0.28/deploy/local-path-storage.yaml}"
+kubectl_apply_local "${MANIFESTS_DIR}/local-path-storage.yaml"
 kubectl annotate storageclass local-path storageclass.kubernetes.io/is-default-class=true --overwrite 2>/dev/null || true
 
 log "Installing nginx-ingress..."
-helm_install ingress-nginx "${CHART_INGRESS_NGINX:-ingress-nginx/ingress-nginx:4.15.1}" ingress-nginx \
+helm_install_local ingress-nginx ingress-nginx ingress-nginx \
   --set controller.resources.requests.cpu=200m \
   --set controller.resources.requests.memory=256Mi
 
 log "Installing cert-manager..."
-helm_install cert-manager "${CHART_CERT_MANAGER:-jetstack/cert-manager:v1.16.2}" cert-manager \
+helm_install_local cert-manager cert-manager cert-manager \
   --set crds.enabled=true \
   --set resources.requests.cpu=100m \
   --set resources.requests.memory=128Mi
@@ -135,42 +117,31 @@ helm_install cert-manager "${CHART_CERT_MANAGER:-jetstack/cert-manager:v1.16.2}"
 kubectl apply -f "$REPO_ROOT/deploy/cert-manager/selfsigned-issuer.yaml"
 
 log "Installing Altinity ClickHouse Operator..."
-kubectl_apply "${MANIFESTS_DIR}/clickhouse-operator-install-bundle.yaml" \
-  "${MANIFEST_CLICKHOUSE_OP:-https://raw.githubusercontent.com/Altinity/clickhouse-operator/master/deploy/operator/clickhouse-operator-install-bundle.yaml}"
+kubectl_apply_local "${MANIFESTS_DIR}/clickhouse-operator-install-bundle.yaml"
 kubectl wait --for=condition=available deployment/clickhouse-operator -n kube-system --timeout=5m 2>/dev/null || \
   kubectl wait --for=condition=available deployment/clickhouse-operator -n clickhouse --timeout=5m 2>/dev/null || true
 
 log "Installing Strimzi Kafka Operator..."
-helm_install strimzi "${CHART_STRIMZI:-strimzi/strimzi-kafka-operator:0.45.0}" strimzi \
+helm_install_local strimzi strimzi-kafka-operator strimzi \
   --set resources.requests.cpu=200m \
   --set resources.requests.memory=512Mi
 
 log "Installing CloudNativePG Operator..."
-helm_install cnpg "${CHART_CNPG:-cnpg/cloudnative-pg:0.23.2}" cnpg-system \
+helm_install_local cnpg cloudnative-pg cnpg-system \
   --set resources.requests.cpu=100m \
   --set resources.requests.memory=256Mi
 
-log "Installing kube-prometheus-stack (minimal)..."
-helm_install monitoring "${CHART_PROMETHEUS:-prometheus-community/kube-prometheus-stack:67.5.0}" monitoring \
+log "Installing kube-prometheus-stack..."
+helm_install_local monitoring kube-prometheus-stack monitoring \
   -f "$REPO_ROOT/deploy/monitoring/values-minimal.yaml"
 
-log "Updating platform chart dependencies..."
-cd "$REPO_ROOT/helm/platform"
-if [[ -d charts ]] && ls charts/*.tgz &>/dev/null; then
-  log "Using cached platform dependencies"
-else
-  helm repo add bitnami https://charts.bitnami.com/bitnami 2>/dev/null || true
-  helm dependency update 2>/dev/null || warn "platform dependency update failed — run download-vendor.sh"
-fi
-cd "$REPO_ROOT"
-
-log "Installing platform control plane..."
+log "Installing platform control plane (local chart + deps)..."
 helm upgrade --install platform "$REPO_ROOT/helm/platform" \
   --namespace platform \
   -f "$REPO_ROOT/helm/platform/values.yaml" \
   --wait --timeout "$HELM_TIMEOUT"
 
-log "Bootstrap complete for server $SERVER_IP."
+log ""
+log "Bootstrap complete (offline) for $SERVER_IP"
 log "Platform UI: https://platform.${BASE_DOMAIN:-192.168.31.195.nip.io}"
 log "Grafana:     https://grafana.${BASE_DOMAIN:-192.168.31.195.nip.io}"
-log "Or port-forward: kubectl port-forward -n platform svc/platform-ui 3000:80"
