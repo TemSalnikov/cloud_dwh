@@ -2,7 +2,7 @@
 # ═══════════════════════════════════════════════════════════════
 # МАШИНА: node1 (192.168.31.195) — или локальная с kubeconfig
 # ЗАЧЕМ:  проверить доступность K8s-кластера перед bootstrap
-# ЗАПУСК: bash /opt/cloud_dwh/scripts/check-cluster.sh
+# ЗАПУСК: bash /home/user/dev/cloud_dwh/scripts/check-cluster.sh
 # ═══════════════════════════════════════════════════════════════
 set -euo pipefail
 

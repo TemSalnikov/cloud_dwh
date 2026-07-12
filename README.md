@@ -19,14 +19,12 @@ Self-service платформа для развёртывания DWH-стека
 Кратко:
 
 ```bash
-# 1. ЛОКАЛЬНАЯ МАШИНА — скопировать проект (один раз)
-./scripts/sync-to-node1.sh
-
-# 2. NODE1 — всё остальное
-ssh ubuntu@192.168.31.195
-sudo bash /opt/cloud_dwh/scripts/setup-node1.sh      # kubectl, helm, docker, registry
-sudo bash /opt/cloud_dwh/scripts/build-images.sh    # образы platform-api/ui
-sudo bash /opt/cloud_dwh/scripts/bootstrap.sh       # ingress, operators, platform
+# NODE1 — всё на сервере (проект: /home/user/dev/cloud_dwh)
+ssh user@192.168.31.195
+cd /home/user/dev/cloud_dwh
+sudo bash scripts/setup-node1.sh      # kubectl, helm, docker, registry
+sudo bash scripts/build-images.sh    # образы platform-api/ui
+sudo bash scripts/bootstrap.sh       # ingress, operators, platform
 ```
 
 ## Архитектура

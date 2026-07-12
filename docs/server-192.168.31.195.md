@@ -36,7 +36,7 @@
 
 | Компонент | Куда ставится | Зачем | Обязательно? |
 |-----------|---------------|-------|--------------|
-| Git / исходники `cloud_dwh` | `~/dev/cloud_dwh` | Редактирование кода, хранение проекта | Да |
+| Git / исходники `cloud_dwh` | `/home/user/dev/cloud_dwh` (node1) | Код проекта, скрипты, helm charts | Да |
 | `rsync`, `ssh` | системные пакеты | Копирование проекта на node1 | Да |
 | `kubectl` | `~/.local/bin` или snap | Опционально: удалённая диагностика кластера | Нет |
 | `helm` | `~/.local/bin` | Опционально: удалённый деплой с локальной машины | **Нет** — на node1 ставится свой |
@@ -44,19 +44,29 @@
 > **Важно:** Helm на локальной машине (`~/.local/bin/helm`) **не нужен** для работы сервера.  
 > Он был установлен для отладки. Все деплои должны выполняться **на node1**.
 
-**Команды (локальная машина, один раз):**
+**Если проект уже склонирован на node1** (ваш случай):
 
 ```bash
-# Скопировать проект на node1
-cd ~/dev/cloud_dwh
+# NODE1 — проект уже здесь:
+# /home/user/dev/cloud_dwh
+cd /home/user/dev/cloud_dwh
+chmod +x scripts/*.sh
+```
+
+**Если нужно скопировать с другой машины:**
+
+```bash
+# ЛОКАЛЬНАЯ МАШИНА
+cd /path/to/cloud_dwh
 chmod +x scripts/*.sh
 ./scripts/sync-to-node1.sh
 ```
 
-Альтернатива без локальной машины — на node1 напрямую:
+**Если нужно клонировать на node1 напрямую:**
 
 ```bash
-sudo git clone https://github.com/TemSalnikov/cloud_dwh.git /opt/cloud_dwh
+# NODE1
+git clone https://github.com/TemSalnikov/cloud_dwh.git /home/user/dev/cloud_dwh
 ```
 
 ---
@@ -76,8 +86,8 @@ sudo git clone https://github.com/TemSalnikov/cloud_dwh.git /opt/cloud_dwh
 **Установка:** один скрипт на node1
 
 ```bash
-ssh ubuntu@192.168.31.195
-sudo bash /opt/cloud_dwh/scripts/setup-node1.sh
+ssh user@192.168.31.195
+sudo bash /home/user/dev/cloud_dwh/scripts/setup-node1.sh
 ```
 
 ---
@@ -104,13 +114,13 @@ sudo bash /opt/cloud_dwh/scripts/setup-node1.sh
 
 ```bash
 # 1. Собрать и загрузить образы в локальный registry
-sudo bash /opt/cloud_dwh/scripts/build-images.sh
+sudo bash /home/user/dev/cloud_dwh/scripts/build-images.sh
 
 # 2. Настроить containerd для локального registry (если ImagePullBackOff)
-sudo bash /opt/cloud_dwh/scripts/configure-registry.sh
+sudo bash /home/user/dev/cloud_dwh/scripts/configure-registry.sh
 
 # 3. Развернуть всю инфраструктуру (~15 мин)
-sudo bash /opt/cloud_dwh/scripts/bootstrap.sh
+sudo bash /home/user/dev/cloud_dwh/scripts/bootstrap.sh
 ```
 
 ---
@@ -149,15 +159,15 @@ sudo bash /opt/cloud_dwh/scripts/bootstrap.sh
 
 ## 3. Полная последовательность установки
 
-### Фаза 0 — Подготовка (локальная машина, ~5 мин)
+### Фаза 0 — Подготовка (node1, ~1 мин)
 
 ```bash
-# ЛОКАЛЬНАЯ МАШИНА
-cd ~/dev/cloud_dwh
-./scripts/sync-to-node1.sh
+# NODE1 — проект уже в /home/user/dev/cloud_dwh
+cd /home/user/dev/cloud_dwh
+chmod +x scripts/*.sh
 ```
 
-**Зачем:** доставить актуальный код на node1 в `/opt/cloud_dwh`.
+**Зачем:** убедиться, что скрипты исполняемые. Клонирование уже выполнено.
 
 ---
 
@@ -165,8 +175,8 @@ cd ~/dev/cloud_dwh
 
 ```bash
 # NODE1
-ssh ubuntu@192.168.31.195
-sudo bash /opt/cloud_dwh/scripts/setup-node1.sh
+ssh user@192.168.31.195
+sudo bash /home/user/dev/cloud_dwh/scripts/setup-node1.sh
 ```
 
 **Зачем:** установить kubectl, helm, docker, registry — всё необходимое для автономной работы сервера.
@@ -186,8 +196,8 @@ docker ps | grep registry
 
 ```bash
 # NODE1
-sudo bash /opt/cloud_dwh/scripts/build-images.sh
-sudo bash /opt/cloud_dwh/scripts/configure-registry.sh
+sudo bash /home/user/dev/cloud_dwh/scripts/build-images.sh
+sudo bash /home/user/dev/cloud_dwh/scripts/configure-registry.sh
 ```
 
 **Зачем:** platform-api и platform-ui — custom-образы. Они собираются на node1 и хранятся в локальном registry, чтобы K8s мог их скачать без интернета.
@@ -198,7 +208,7 @@ sudo bash /opt/cloud_dwh/scripts/configure-registry.sh
 
 ```bash
 # NODE1
-sudo bash /opt/cloud_dwh/scripts/bootstrap.sh
+sudo bash /home/user/dev/cloud_dwh/scripts/bootstrap.sh
 ```
 
 **Зачем:** развернуть ingress, operators, monitoring и control plane — всё, что нужно для self-service создания DWH-стеков.
@@ -230,7 +240,7 @@ kubectl get ingress -A
 ## 4. Карта файлов проекта на node1
 
 ```
-/opt/cloud_dwh/                  ← весь проект (с локальной машины или git clone)
+/home/user/dev/cloud_dwh/                  ← весь проект (с локальной машины или git clone)
 ├── deploy/server.env            ← IP, домен, пути (конфиг node1)
 ├── scripts/
 │   ├── setup-node1.sh           ← NODE1: kubectl + helm + docker + registry
@@ -276,14 +286,15 @@ node1 (192.168.31.195)
 ## 6. Обновление проекта (когда меняется код)
 
 ```bash
-# 1. ЛОКАЛЬНАЯ МАШИНА — доставить новый код
+# 1. ЛОКАЛЬНАЯ МАШИНА — доставить новый код (если редактировали локально)
 ./scripts/sync-to-node1.sh
 
 # 2. NODE1 — пересобрать образы (если менялись platform-api/ui)
-sudo bash /opt/cloud_dwh/scripts/build-images.sh
+cd /home/user/dev/cloud_dwh
+sudo bash scripts/build-images.sh
 
 # 3. NODE1 — обновить деплой
-sudo bash /opt/cloud_dwh/scripts/bootstrap.sh
+sudo bash scripts/bootstrap.sh
 ```
 
 ---
@@ -293,9 +304,9 @@ sudo bash /opt/cloud_dwh/scripts/bootstrap.sh
 | Симптом | Где смотреть | Решение (на node1) |
 |---------|--------------|-------------------|
 | `Missing: helm` | локальная машина | Не запускайте bootstrap локально — только на node1 |
-| `Missing: helm` | node1 | `sudo bash /opt/cloud_dwh/scripts/setup-node1.sh` |
+| `Missing: helm` | node1 | `sudo bash /home/user/dev/cloud_dwh/scripts/setup-node1.sh` |
 | `Unable to connect to server` | node1 | `export KUBECONFIG=/etc/kubernetes/admin.conf` |
-| `ImagePullBackOff` | node1 | `sudo bash /opt/cloud_dwh/scripts/configure-registry.sh` |
+| `ImagePullBackOff` | node1 | `sudo bash /home/user/dev/cloud_dwh/scripts/configure-registry.sh` |
 | `Pending` PVC | node1 | `kubectl get sc` — нужен StorageClass `local-path` |
 | UI не открывается | браузер | Проверить `kubectl get ingress -n platform` на node1 |
 | nip.io не резолвится | браузер | Добавить в `/etc/hosts`: `192.168.31.195 platform.192.168.31.195.nip.io` |
@@ -328,7 +339,7 @@ kubectl port-forward -n platform svc/platform-ui 3000:80
 ```bash
 SERVER_IP=192.168.31.195
 BASE_DOMAIN=192.168.31.195.nip.io
-REPO_DIR=/opt/cloud_dwh
+REPO_DIR=/home/user/dev/cloud_dwh
 REGISTRY=192.168.31.195:5000
 KUBECONFIG=/etc/kubernetes/admin.conf
 ```

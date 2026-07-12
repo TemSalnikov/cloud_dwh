@@ -3,7 +3,7 @@
 # МАШИНА: локальная (ваш ПК)
 # ЗАЧЕМ:  однократно скопировать проект на node1
 # ЗАПУСК: ./scripts/sync-to-node1.sh
-# ТРЕБУЕТ: ssh-доступ к ubuntu@192.168.31.195
+# ТРЕБУЕТ: ssh-доступ к user@192.168.31.195
 # ═══════════════════════════════════════════════════════════════
 set -euo pipefail
 
@@ -18,8 +18,8 @@ if [[ -f "$REPO_ROOT/deploy/server.env" ]]; then
 fi
 
 SERVER_IP="${SERVER_IP:-192.168.31.195}"
-SERVER_USER="${SERVER_USER:-ubuntu}"
-REPO_DIR="${REPO_DIR:-/opt/cloud_dwh}"
+SERVER_USER="${SERVER_USER:-user}"
+REPO_DIR="${REPO_DIR:-/home/user/dev/cloud_dwh}"
 
 log() { echo "[sync-to-node1] $*"; }
 
@@ -29,7 +29,7 @@ need ssh
 
 log "Syncing $REPO_ROOT → ${SERVER_USER}@${SERVER_IP}:${REPO_DIR}"
 
-ssh "${SERVER_USER}@${SERVER_IP}" "sudo mkdir -p ${REPO_DIR} && sudo chown ${SERVER_USER}:${SERVER_USER} ${REPO_DIR}"
+ssh "${SERVER_USER}@${SERVER_IP}" "mkdir -p ${REPO_DIR}"
 
 rsync -avz --delete \
   --exclude '.git' \

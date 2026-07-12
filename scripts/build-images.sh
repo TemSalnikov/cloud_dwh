@@ -2,7 +2,7 @@
 # ═══════════════════════════════════════════════════════════════
 # МАШИНА: node1 (192.168.31.195)
 # ЗАЧЕМ:  собрать образы platform-api/ui и загрузить в локальный registry
-# ЗАПУСК: sudo bash /opt/cloud_dwh/scripts/build-images.sh
+# ЗАПУСК: sudo bash /home/user/dev/cloud_dwh/scripts/build-images.sh
 # ТРЕБУЕТ: setup-node1.sh (docker + registry :5000)
 # ═══════════════════════════════════════════════════════════════
 set -euo pipefail

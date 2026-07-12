@@ -3,15 +3,25 @@
 # МАШИНА: node1 (192.168.31.195)
 # ЗАЧЕМ:  установить kubectl, helm, docker, registry на сервер
 #         чтобы node1 работал автономно без локальной машины
-# ЗАПУСК: ssh ubuntu@192.168.31.195
-#         sudo bash /opt/cloud_dwh/scripts/setup-node1.sh
+# ЗАПУСК: ssh user@192.168.31.195
+#         sudo bash /home/user/dev/cloud_dwh/scripts/setup-node1.sh
 # ═══════════════════════════════════════════════════════════════
 set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+if [[ -f "$REPO_ROOT/deploy/server.env" ]]; then
+  set -a
+  # shellcheck source=/dev/null
+  source "$REPO_ROOT/deploy/server.env"
+  set +a
+fi
 
 HELM_VERSION="${HELM_VERSION:-v3.16.4}"
 KUBECTL_VERSION="${KUBECTL_VERSION:-v1.31.4}"
 INSTALL_DIR="${INSTALL_DIR:-/usr/local/bin}"
-REPO_DIR="${REPO_DIR:-/opt/cloud_dwh}"
+REPO_DIR="${REPO_DIR:-/home/user/dev/cloud_dwh}"
 
 log() { echo "[setup-node1] $*"; }
 
@@ -44,8 +54,8 @@ if [[ -f /etc/kubernetes/admin.conf ]]; then
   cp /etc/kubernetes/admin.conf /root/.kube/config
   chown root:root /root/.kube/config
 
-  # Для пользователя ubuntu (или первого non-root)
-  DEPLOY_USER="${SUDO_USER:-ubuntu}"
+  # Для пользователя user (или того, кто запустил sudo)
+  DEPLOY_USER="${SUDO_USER:-${SERVER_USER:-user}}"
   if id "$DEPLOY_USER" &>/dev/null; then
     USER_HOME=$(eval echo "~$DEPLOY_USER")
     mkdir -p "$USER_HOME/.kube"
@@ -63,9 +73,9 @@ if ! command -v docker &>/dev/null; then
   apt-get update -qq
   apt-get install -y docker.io
   systemctl enable --now docker
-  if id "${SUDO_USER:-ubuntu}" &>/dev/null; then
-    usermod -aG docker "${SUDO_USER:-ubuntu}"
-    log "User ${SUDO_USER:-ubuntu} added to docker group (re-login required)"
+  if id "${DEPLOY_USER}" &>/dev/null; then
+    usermod -aG docker "${DEPLOY_USER}"
+    log "User ${DEPLOY_USER} added to docker group (re-login required)"
   fi
 fi
 

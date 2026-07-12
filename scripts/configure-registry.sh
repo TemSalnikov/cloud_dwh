@@ -2,14 +2,19 @@
 # ═══════════════════════════════════════════════════════════════
 # МАШИНА: node1 (192.168.31.195)
 # ЗАЧЕМ:  настроить containerd для локального registry :5000
-# ЗАПУСК: sudo bash /opt/cloud_dwh/scripts/configure-registry.sh
+# ЗАПУСК: sudo bash /home/user/dev/cloud_dwh/scripts/configure-registry.sh
 # КОГДА:  если pods в ImagePullBackOff
 # ═══════════════════════════════════════════════════════════════
 set -euo pipefail
 
-if [[ -f /opt/cloud_dwh/deploy/server.env ]]; then
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+if [[ -f "$REPO_ROOT/deploy/server.env" ]]; then
+  set -a
   # shellcheck source=/dev/null
-  source /opt/cloud_dwh/deploy/server.env
+  source "$REPO_ROOT/deploy/server.env"
+  set +a
 fi
 
 SERVER_IP="${SERVER_IP:-192.168.31.195}"

@@ -2,7 +2,7 @@
 # ═══════════════════════════════════════════════════════════════
 # МАШИНА: node1 (192.168.31.195)
 # ЗАЧЕМ:  развернуть ingress, operators, monitoring, platform
-# ЗАПУСК: sudo bash /opt/cloud_dwh/scripts/bootstrap.sh
+# ЗАПУСК: sudo bash /home/user/dev/cloud_dwh/scripts/bootstrap.sh
 # ТРЕБУЕТ: setup-node1.sh и build-images.sh (выполнены ранее)
 # ═══════════════════════════════════════════════════════════════
 set -euo pipefail
