@@ -347,7 +347,7 @@ sudo bash scripts/bootstrap.sh
 | Helm release `failed`, pod Running | То же — timeout на LB | `helm upgrade` с `values-baremetal.yaml` (сделано автоматически в bootstrap) |
 | `Offline-пакет неполный` | node1 | Сначала sync-offline-bundle с локальной машины |
 | `Unable to connect to server` | node1 | `export KUBECONFIG=/etc/kubernetes/admin.conf` |
-| `ImagePullBackOff` | node1 | `sudo bash /home/user/dev/cloud_dwh/scripts/configure-registry.sh` |
+| `ImagePullBackOff` platform-* | Образы не на node1 | **ЛОКАЛЬНАЯ:** `pack-platform-images.sh` → `sync-platform-images.sh`; **NODE1:** `load-platform-images.sh` |
 | `Pending` PVC | node1 | `kubectl get sc` — нужен StorageClass `local-path` |
 | UI не открывается | браузер | Проверить `kubectl get ingress -n platform` на node1 |
 | nip.io не резолвится | браузер | Добавить в `/etc/hosts`: `192.168.31.195 platform.192.168.31.195.nip.io` |

@@ -14,3 +14,5 @@ helm/platform/charts/
 !deploy/vendor/charts/*.tgz
 !deploy/vendor/platform-charts/*.tgz
 !helm/platform/charts/*.tgz
+deploy/vendor/images/*.tar
+

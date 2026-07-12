@@ -1,49 +1,55 @@
 postgresql:
   enabled: true
+  image:
+    repository: postgres
+    tag: "16-alpine"
+    pullPolicy: Never   # образ загружается offline на node1
   auth:
     username: platform
     password: platform
     database: platform
-  primary:
-    persistence:
-      size: 5Gi
-    resources:
-      requests:
-        cpu: 250m
-        memory: 512Mi
+  persistence:
+    size: 5Gi
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
 
 redis:
   enabled: true
-  architecture: standalone
-  master:
-    persistence:
-      enabled: false
-    resources:
-      requests:
-        cpu: 100m
-        memory: 128Mi
+  image:
+    repository: redis
+    tag: "7-alpine"
+    pullPolicy: Never
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
 
 platformApi:
+  enabled: true
   image:
     repository: cloud-dwh/platform-api
     tag: "0.1.0"
-    pullPolicy: IfNotPresent
+    pullPolicy: Never
   replicaCount: 1
   resources:
     requests:
       cpu: 250m
       memory: 512Mi
   env:
-    DATABASE_URL: "postgresql://platform:platform@platform-postgresql:5432/platform"
-    REDIS_URL: "redis://platform-redis-master:6379/0"
+    # asyncpg DSN for SQLAlchemy
+    DATABASE_URL: "postgresql+asyncpg://platform:platform@platform-postgresql:5432/platform"
+    REDIS_URL: "redis://platform-redis:6379/0"
     KUBECONFIG_IN_CLUSTER: "true"
     HELM_CHARTS_PATH: "/charts/stacks"
 
 platformUi:
+  enabled: true
   image:
     repository: cloud-dwh/platform-ui
     tag: "0.1.0"
-    pullPolicy: IfNotPresent
+    pullPolicy: Never
   replicaCount: 1
   resources:
     requests:
@@ -56,7 +62,6 @@ ingress:
   host: platform.192.168.31.195.nip.io
   tls: true
 
-# IP сервера с Kubernetes
 server:
   ip: 192.168.31.195
   apiServer: https://192.168.31.195:6443
