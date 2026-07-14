@@ -332,6 +332,8 @@ class StackProvisioner:
             {"cnpg.io/cluster": "postgres", "role": "primary"},
             [{"name": "postgresql", "port": 5432, "target_port": 5432}],
         )
+
+    def _deploy_redis(self):
         labels = {"app": "redis"}
         dep = client.V1Deployment(
             metadata=client.V1ObjectMeta(name="redis", namespace=self.namespace),
