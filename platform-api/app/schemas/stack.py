@@ -1,4 +1,6 @@
-from pydantic import BaseModel, Field, field_validator
+from typing import Literal
+
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class ServiceResources(BaseModel):
@@ -7,10 +9,30 @@ class ServiceResources(BaseModel):
     storage: str | None = Field(default=None, pattern=r"^\d+(Gi|Ti)$")
 
 
+class ClickHouseNode(BaseModel):
+    role: Literal["shard", "replica"] = "replica"
+
+
 class ClickHouseConfig(BaseModel):
     enabled: bool = False
-    replicas: int = Field(default=1, ge=1, le=4)
+    replicas: int = Field(default=1, ge=1, le=8)
+    nodes: list[ClickHouseNode] | None = None
     resources: ServiceResources = ServiceResources(cpu="2", memory="8Gi", storage="50Gi")
+
+    @model_validator(mode="after")
+    def sync_nodes_and_replicas(self):
+        if self.nodes:
+            if len(self.nodes) < 1 or len(self.nodes) > 8:
+                raise ValueError("ClickHouse nodes must be between 1 and 8")
+            fixed = [n.model_copy() for n in self.nodes]
+            fixed[0].role = "shard"
+            self.nodes = fixed
+            self.replicas = len(fixed)
+        else:
+            self.nodes = [ClickHouseNode(role="shard")] + [
+                ClickHouseNode(role="replica") for _ in range(max(0, self.replicas - 1))
+            ]
+        return self
 
 
 class KafkaConfig(BaseModel):

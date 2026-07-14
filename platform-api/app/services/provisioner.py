@@ -168,6 +168,8 @@ class StackProvisioner:
                 raise
 
     def _create_resource_quota(self):
+        from app.services.clickhouse_topology import unit_count as ch_units
+
         # Generous buffer: redis, kafka-ui, init jobs, operators sidecars
         total_cpu = 4.0
         total_gi = 8
@@ -175,16 +177,17 @@ class StackProvisioner:
             if not self._enabled(svc):
                 continue
             res = self.spec[svc].get("resources", {})
-            total_cpu += float(res.get("cpu", 1))
+            cpu = float(res.get("cpu", 1))
             mem = res.get("memory", "2Gi")
-            total_gi += int(str(mem).replace("Gi", "").replace("Mi", "") or "0")
+            mem_gi = int(str(mem).replace("Gi", "").replace("Mi", "") or "0")
+            units = 1
             if svc == "clickhouse":
-                total_cpu *= max(1, int(self.spec[svc].get("replicas", 1)))
-                total_gi *= max(1, int(self.spec[svc].get("replicas", 1)))
+                units = ch_units(self.spec[svc])
+            elif svc == "kafka":
+                units = int(self.spec[svc].get("brokers", 1))
+            total_cpu += cpu * units
+            total_gi += mem_gi * units
             if svc == "kafka":
-                brokers = int(self.spec[svc].get("brokers", 1))
-                total_cpu += float(res.get("cpu", 1)) * (brokers - 1)
-                total_gi += int(str(res.get("memory", "2Gi")).replace("Gi", "") or "0") * (brokers - 1)
                 total_cpu += 0.5  # kafka-ui
                 total_gi += 1
 
@@ -375,9 +378,11 @@ class StackProvisioner:
         self._apply_dep_svc_ing(dep=dep, svc=svc)
 
     def _deploy_clickhouse(self):
+        from app.services.clickhouse_topology import layout_for_chi
+
         cfg = self.spec.get("clickhouse", {})
         res = cfg.get("resources", {})
-        replicas = cfg.get("replicas", 1)
+        layout = layout_for_chi(cfg)
 
         ch_secret = client.V1Secret(
             metadata=client.V1ObjectMeta(name="clickhouse-credentials", namespace=self.namespace),
@@ -413,7 +418,7 @@ class StackProvisioner:
                     "clusters": [
                         {
                             "name": "dwh",
-                            "layout": {"shardsCount": 1, "replicasCount": replicas},
+                            "layout": layout,
                         }
                     ],
                     "users": {
@@ -974,8 +979,10 @@ class StackProvisioner:
             if e.status not in (404, 403):
                 logger.warning("CNPG hibernation patch failed: %s", e)
 
-        # ClickHouse replicas
+        # ClickHouse scale (preserve explicit shards layout when stopping/starting)
         try:
+            import json
+
             chis = self.custom.list_namespaced_custom_object(
                 "clickhouse.altinity.com", "v1", self.namespace, "clickhouseinstallations"
             ).get("items", [])
@@ -985,23 +992,33 @@ class StackProvisioner:
                 clusters = chi.get("spec", {}).get("configuration", {}).get("clusters", [])
                 if not clusters:
                     continue
-                current = (
-                    clusters[0].get("layout", {}).get("replicasCount")
-                    or clusters[0].get("layout", {}).get("replicas")
-                    or 1
-                )
+                layout = clusters[0].get("layout") or {}
                 if save_prev and target == 0:
-                    annotations["cloud-dwh/prev-replicas"] = str(current)
-                    replicas = 0
+                    annotations["cloud-dwh/prev-ch-layout"] = json.dumps(layout)
+                    # Scale each shard to 0 replicas (operator may keep CR valid with empty pods)
+                    stopped_shards = []
+                    if layout.get("shards"):
+                        for shard in layout["shards"]:
+                            stopped_shards.append({"replicasCount": 0})
+                        new_layout = {"shards": stopped_shards}
+                    else:
+                        new_layout = {"shardsCount": layout.get("shardsCount", 1), "replicasCount": 0}
                 else:
-                    replicas = int(annotations.get("cloud-dwh/prev-replicas", str(current)) or "1")
-                    if target is not None:
-                        replicas = target
+                    prev = annotations.get("cloud-dwh/prev-ch-layout")
+                    if prev:
+                        try:
+                            new_layout = json.loads(prev)
+                        except Exception:
+                            new_layout = layout
+                    else:
+                        new_layout = layout
+                        if target is not None and "replicasCount" in new_layout:
+                            new_layout = {**new_layout, "replicasCount": target}
                 patch = {
                     "metadata": {"annotations": annotations},
                     "spec": {
                         "configuration": {
-                            "clusters": [{"layout": {"replicasCount": max(0, replicas)}}]
+                            "clusters": [{"layout": new_layout}]
                         }
                     },
                 }

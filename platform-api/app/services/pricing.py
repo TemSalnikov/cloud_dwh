@@ -1,32 +1,24 @@
-"""Pricing defaults based on Russian IaaS market (VK Cloud / Selectel, 2026).
-
-Sources / anchors (₽ / month, VAT incl. where published):
-- VK Cloud: vCPU Ice Lake ~849 ₽, RAM ~223 ₽/Gi, SSD ~13 ₽/Gi
-  https://cloud.vk.com/pricelist/
-- Selectel: network SSD from ~9 ₽/Gi, local SSD ~11 ₽/Gi
-  https://selectel.ru/services/cloud/servers/
-
-Cloud DWH defaults sit slightly below mid-market private-IaaS rates.
-Admins can change them in the superuser console.
-"""
+"""Pricing defaults for Cloud DWH (₽ / month). Editable by superuser."""
 
 from __future__ import annotations
+
+from app.services.clickhouse_topology import unit_count as ch_units
 
 DEFAULT_PRICES = {
     "currency": "RUB",
     "vcpu_month": 780.0,
     "ram_gb_month": 210.0,
     "storage_gb_month": 12.0,
-    # Flat managed fee per enabled platform service (PaaS markup)
+    # Flat managed fee per enabled platform service
     "service_month": 490.0,
-    # When stack is stopped/frozen: charge storage (+ optional service fee factor)
+    # When stack is stopped/blocked: charge storage; compute off by default
     "stopped_compute_factor": 0.0,
     "stopped_storage_factor": 1.0,
     "blocked_compute_factor": 0.0,
     "blocked_storage_factor": 1.0,
     "source_note": (
-        "Ориентиры 2026: VK Cloud (~849₽/vCPU, ~223₽/Gi RAM, ~13₽/Gi SSD), "
-        "Selectel SSD ~9–11₽/Gi. Прайс Cloud DWH редактируется суперпользователем."
+        "Тарифы Cloud DWH: vCPU, RAM и SSD за месяц, плюс плата за управляемый сервис. "
+        "Значения меняет суперпользователь в панели администратора."
     ),
 }
 
@@ -74,11 +66,10 @@ def spec_resources(spec: dict) -> dict:
 
         multiplier = 1
         if key == "clickhouse":
-            multiplier = max(1, int(cfg.get("replicas") or 1))
+            multiplier = ch_units(cfg)
         elif key == "kafka":
             multiplier = max(1, int(cfg.get("brokers") or 1))
         elif key == "airflow":
-            # workers consume extra CPU/RAM beyond the webserver defaults in billing
             workers = max(1, int(cfg.get("workers") or 1))
             multiplier = workers
 

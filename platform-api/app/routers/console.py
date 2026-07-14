@@ -89,6 +89,14 @@ def _resolve_pod_name(namespace: str, hint: str) -> tuple[str, str]:
             if idx.isdigit() and idx in name:
                 score += 4
             score += 2
+        # clickhouse-{shard}-{replica}
+        if hint_l.startswith("clickhouse-") and "clickhouse" in name:
+            parts = hint_l.split("-")
+            if len(parts) >= 3 and parts[1].isdigit() and parts[2].isdigit():
+                s_idx, r_idx = parts[1], parts[2]
+                if f"-{s_idx}-{r_idx}-" in name or name.endswith(f"-{s_idx}-{r_idx}-0"):
+                    score += 12
+                score += 3
         if p.status.phase == "Running":
             score += 1
         scored.append((score, p))

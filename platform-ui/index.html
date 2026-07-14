@@ -139,6 +139,22 @@
     .modal-backdrop { position: fixed; inset: 0; background: rgba(16,32,39,.45); display: flex; align-items: center; justify-content: center; z-index: 50; padding: 1rem; }
     .modal { background: #fff; border-radius: 16px; width: min(720px, 100%); max-height: 90vh; overflow: auto; padding: 1.4rem; box-shadow: var(--shadow); }
     .modal h2 { font-family: var(--display); margin-bottom: .75rem; }
+    .status-pill {
+      display: inline-block; font-size: .72rem; font-weight: 600; letter-spacing: .01em;
+      padding: .18rem .55rem; border-radius: 999px; border: 1px solid var(--line);
+      background: #eef3f4; color: #3a555c;
+    }
+    .status-pill.is-ready, .status-pill.is-running { background: #e5f6ef; color: #1b6b45; border-color: #b7e0cb; }
+    .status-pill.is-pending, .status-pill.is-ожидание { background: #fff6e8; color: #8a5a12; border-color: #f0d4a0; }
+    .status-pill.is-failed, .status-pill.is-ошибка { background: #fdeceb; color: #9b2c2c; border-color: #f0b5b5; }
+    .status-pill.is-logical, .status-pill.is-логическая { background: #eef1f8; color: #3d4f7a; border-color: #c8d0e6; }
+    .ch-nodes { display: grid; gap: .5rem; margin-top: .5rem; grid-column: 1 / -1; }
+    .ch-node-row {
+      display: grid; grid-template-columns: auto 1fr; gap: .6rem; align-items: center;
+      padding: .55rem .7rem; border: 1px solid var(--line); border-radius: 10px; background: #f7fafb;
+    }
+    .ch-node-row select { width: 100%; }
+    .ch-hint { grid-column: 1 / -1; font-size: .75rem; color: var(--muted); line-height: 1.35; }
   </style>
 </head>
 <body>
@@ -147,9 +163,9 @@
       <div class="brand-mark">Cloud<span>DWH</span></div>
       <div class="auth-hero">
         <h1>Кластер, цена и контроль в одной панели</h1>
-        <p>Калькулятор по рыночным тарифам, управление своим стеком и консоль суперпользователя.</p>
+        <p>Калькулятор стоимости, управление своим стеком и консоль суперпользователя.</p>
         <ul class="auth-points">
-          <li>Ориентиры цен: VK Cloud / Selectel (₽/мес за vCPU, RAM, SSD)</li>
+          <li>Тарифы Cloud DWH: ₽/мес за vCPU, RAM и SSD</li>
           <li>Пользователь: стоп / старт / рестарт / правка / удаление</li>
           <li>Админ: блок, цены, удаление любых кластеров</li>
         </ul>
@@ -486,11 +502,21 @@
             a.web_note ? `<div class="stack-ns">${escapeHtml(a.web_note)}</div>` : '',
             a.hint ? `<div class="stack-ns">${escapeHtml(a.hint)}</div>` : '',
           ].filter(Boolean).join('');
+          const statusText = n.status_label || n.status || '—';
+          const statusKey = String(n.status || statusText).toLowerCase();
+          let statusClass = 'is-pending';
+          if (n.ready || statusKey === 'running' || statusText === 'Готова') statusClass = 'is-ready';
+          else if (statusKey === 'failed' || statusText === 'Ошибка') statusClass = 'is-failed';
+          else if (statusKey === 'logical' || statusText === 'Логическая') statusClass = 'is-logical';
           return `<tr>
             <td>
               <strong>${escapeHtml(n.title || n.name || n.role || 'node')}</strong>
-              <div class="stack-ns">${escapeHtml(n.role || '')}${n.status ? ' · ' + escapeHtml(n.status) : ''}${n.pod_ip ? ' · ' + escapeHtml(n.pod_ip) : ''}</div>
+              <div class="stack-ns">${escapeHtml(n.role || '')}${n.pod_ip ? ' · ' + escapeHtml(n.pod_ip) : ''}${n.pod_name ? ' · ' + escapeHtml(n.pod_name) : ''}</div>
               <div class="stack-ns" style="margin-top:.35rem">${escapeHtml(n.specs || '')}</div>
+            </td>
+            <td>
+              <span class="status-pill ${statusClass}">${escapeHtml(statusText)}</span>
+              ${n.ready_containers || n.status_reason ? `<div class="stack-ns" style="margin-top:.35rem">${escapeHtml([n.ready_containers, n.status_reason].filter(Boolean).join(' · '))}</div>` : ''}
             </td>
             <td class="conn-cell">${svcLines || '—'}</td>
             <td class="conn-cell">${adminLines || '—'}</td>
@@ -511,11 +537,12 @@
             <thead>
               <tr>
                 <th>Нода / характеристики</th>
+                <th>Статус</th>
                 <th>Подключение к сервису</th>
                 <th>Администрирование</th>
               </tr>
             </thead>
-            <tbody>${nodeRows || '<tr><td colspan="3">Нет нод</td></tr>'}</tbody>
+            <tbody>${nodeRows || '<tr><td colspan="4">Нет нод</td></tr>'}</tbody>
           </table>
         </div>`;
       }).join('');
@@ -642,7 +669,14 @@
             <div><h3>${svc.name}</h3><p>${svc.description}</p></div>
           </div>
           <div class="service-config">
-            ${key === 'clickhouse' ? `<div><label>Replicas</label><input type="number" id="${key}-replicas" value="${svc.defaults.replicas||1}" min="1" max="4" oninput="onCustomChange()"></div>` : ''}
+            ${key === 'clickhouse' ? `
+              <div class="ch-nodes">
+                <div><label>Число нод</label>
+                  <input type="number" id="clickhouse-node-count" value="${(svc.defaults.nodes&&svc.defaults.nodes.length)||svc.defaults.replicas||1}" min="1" max="8" oninput="renderClickHouseNodes()">
+                </div>
+                <div class="ch-hint">Для каждой ноды выберите роль: <strong>шард</strong> — новый сегмент данных, <strong>реплика</strong> — копия текущей шарды. Первая нода всегда шард.</div>
+                <div id="clickhouse-nodes-list"></div>
+              </div>` : ''}
             ${key === 'kafka' ? `<div><label>Brokers</label><input type="number" id="${key}-brokers" value="${svc.defaults.brokers||1}" min="1" max="3" oninput="onCustomChange()"></div>` : ''}
             ${key === 'airflow' ? `<div><label>Workers</label><input type="number" id="${key}-workers" value="${svc.defaults.workers||1}" min="1" max="8" oninput="onCustomChange()"></div>` : ''}
             <div><label>CPU</label><input id="${key}-cpu" value="${svc.defaults.cpu}" oninput="onCustomChange()"></div>
@@ -650,6 +684,44 @@
             ${svc.defaults.storage ? `<div><label>Storage</label><input id="${key}-storage" value="${svc.defaults.storage}" oninput="onCustomChange()"></div>` : ''}
           </div>
         </div>`).join('');
+      renderClickHouseNodes((catalog.services.clickhouse.defaults.nodes || []).map(n => n.role), true);
+    }
+
+    function renderClickHouseNodes(presetRoles, silent) {
+      const list = document.getElementById('clickhouse-nodes-list');
+      const countEl = document.getElementById('clickhouse-node-count');
+      if (!list || !countEl) return;
+      let count = parseInt(countEl.value, 10);
+      if (!Number.isFinite(count) || count < 1) count = 1;
+      if (count > 8) count = 8;
+      countEl.value = count;
+      const prev = {};
+      list.querySelectorAll('select[data-ch-idx]').forEach(sel => { prev[sel.dataset.chIdx] = sel.value; });
+      const roles = [];
+      for (let i = 0; i < count; i++) {
+        let role = (presetRoles && presetRoles[i]) || prev[i] || (i === 0 ? 'shard' : 'replica');
+        if (i === 0) role = 'shard';
+        roles.push(role);
+      }
+      list.innerHTML = roles.map((role, i) => `
+        <div class="ch-node-row">
+          <strong>Нода ${i + 1}</strong>
+          <select data-ch-idx="${i}" ${i === 0 ? 'disabled' : ''} onchange="onCustomChange()">
+            <option value="shard" ${role === 'shard' ? 'selected' : ''}>Шард</option>
+            <option value="replica" ${role === 'replica' ? 'selected' : ''}>Реплика</option>
+          </select>
+        </div>`).join('');
+      if (!silent) onCustomChange();
+    }
+
+    function readClickHouseNodes() {
+      const list = document.getElementById('clickhouse-nodes-list');
+      if (!list) return [{ role: 'shard' }];
+      const nodes = [];
+      list.querySelectorAll('select[data-ch-idx]').forEach((sel, i) => {
+        nodes.push({ role: i === 0 ? 'shard' : (sel.value === 'shard' ? 'shard' : 'replica') });
+      });
+      return nodes.length ? nodes : [{ role: 'shard' }];
     }
 
     function toggleService(key, fromCheckbox) {
@@ -687,7 +759,14 @@
         document.getElementById('chk-' + svc).checked = enabled;
         document.getElementById('svc-' + svc).classList.toggle('enabled', enabled);
         if (!enabled) continue;
-        if (cfg.replicas && document.getElementById(svc + '-replicas')) document.getElementById(svc + '-replicas').value = cfg.replicas;
+        if (svc === 'clickhouse') {
+          const roles = (cfg.nodes || []).map(n => (n.role || 'replica'));
+          const countEl = document.getElementById('clickhouse-node-count');
+          if (countEl) {
+            countEl.value = roles.length || cfg.replicas || 1;
+            renderClickHouseNodes(roles.length ? roles : null, true);
+          }
+        }
         if (cfg.brokers && document.getElementById(svc + '-brokers')) document.getElementById(svc + '-brokers').value = cfg.brokers;
         if (cfg.workers && document.getElementById(svc + '-workers')) document.getElementById(svc + '-workers').value = cfg.workers;
         if (cfg.resources) {
@@ -710,8 +789,11 @@
         };
         const storage = document.getElementById(key + '-storage');
         if (storage) spec[key].resources.storage = storage.value;
-        const replicas = document.getElementById(key + '-replicas');
-        if (replicas) spec[key].replicas = parseInt(replicas.value, 10);
+        if (key === 'clickhouse') {
+          const nodes = readClickHouseNodes();
+          spec[key].nodes = nodes;
+          spec[key].replicas = nodes.length;
+        }
         const brokers = document.getElementById(key + '-brokers');
         if (brokers) spec[key].brokers = parseInt(brokers.value, 10);
         const workers = document.getElementById(key + '-workers');

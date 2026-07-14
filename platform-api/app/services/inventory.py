@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from app.config import settings
+from app.services.clickhouse_topology import expand_topology, unit_count as ch_unit_count
 from app.services.pricing import DEFAULT_PRICES, parse_cpu, parse_gi
 
 SERVICE_META = {
@@ -16,7 +17,7 @@ SERVICE_META = {
 
 def _unit_count(key: str, cfg: dict) -> int:
     if key == "clickhouse":
-        return max(1, int(cfg.get("replicas") or 1))
+        return ch_unit_count(cfg)
     if key == "kafka":
         return max(1, int(cfg.get("brokers") or 1))
     if key == "airflow":
@@ -29,13 +30,14 @@ def _specs_text(key: str, cfg: dict, units: int) -> str:
     cpu, mem, storage = res.get("cpu", "—"), res.get("memory", "—"), res.get("storage")
     base = f"CPU {cpu}, RAM {mem}" + (f", диск {storage}" if storage else "")
     if key == "clickhouse":
-        return f"{units} реплик(и): {base} на каждую"
+        topo = expand_topology(cfg)
+        shards = {n["shard"] for n in topo}
+        return f"{len(shards)} шард(ов), {units} нод(ы): {base} на каждую"
     if key == "kafka":
         return f"{units} брокер(а): {base} на каждый"
     if key == "airflow":
         return f"Web + Scheduler, ёмкость {units} worker: {base}"
     return base
-
 
 def _cost_for_service(key: str, cfg: dict, prices: dict) -> dict:
     p = {**DEFAULT_PRICES, **(prices or {})}
@@ -137,15 +139,18 @@ def _nodes_from_spec(
         user = creds.get("clickhouse_user") or "dwh"
         password = creds.get("clickhouse_password")
         web = endpoints.get("clickhouse_web") or f"https://{stack_name}-ch.{domain}"
-        for i in range(units):
+        for topo in expand_topology(cfg):
             http_port = 8123
             native_port = 9000
-            pod_hint = f"clickhouse-replica-{i}"
             nodes.append(
                 {
-                    "title": f"ClickHouse · реплика {i + 1}",
-                    "role": f"replica-{i}",
-                    "status": "planned",
+                    "title": topo["title"],
+                    "role": f"shard-{topo['shard']}-replica-{topo['replica']}",
+                    "topology_role": topo["role"],
+                    "shard": topo["shard"],
+                    "replica": topo["replica"],
+                    "status": "Pending",
+                    "status_label": "Ожидание",
                     "specs": specs_unit,
                     "service": _svc_block(
                         host=host,
@@ -171,7 +176,7 @@ def _nodes_from_spec(
                     ),
                     "admin": _console_admin(
                         stack_id=stack_id,
-                        pod_hint=pod_hint,
+                        pod_hint=topo["pod_hint"],
                         web_url=web,
                         web_user=user,
                         web_password=password,
@@ -189,7 +194,8 @@ def _nodes_from_spec(
                 {
                     "title": f"Kafka · брокер {i + 1}",
                     "role": f"broker-{i}",
-                    "status": "planned",
+                    "status": "Pending",
+                    "status_label": "Ожидание",
                     "specs": specs_unit,
                     "service": _svc_block(
                         host=host,
@@ -215,7 +221,8 @@ def _nodes_from_spec(
             {
                 "title": "PostgreSQL · primary",
                 "role": "primary",
-                "status": "planned",
+                "status": "Pending",
+                "status_label": "Ожидание",
                 "specs": specs_unit,
                 "service": _svc_block(
                     host=host,
@@ -243,7 +250,8 @@ def _nodes_from_spec(
             {
                 "title": "Airflow · Webserver",
                 "role": "webserver",
-                "status": "planned",
+                "status": "Pending",
+                "status_label": "Ожидание",
                 "specs": "CPU 0.5, RAM 1Gi",
                 "service": _svc_block(
                     host=f"{stack_name}-airflow.{domain}",
@@ -268,7 +276,8 @@ def _nodes_from_spec(
             {
                 "title": "Airflow · Scheduler",
                 "role": "scheduler",
-                "status": "planned",
+                "status": "Pending",
+                "status_label": "Ожидание",
                 "specs": specs_unit,
                 "service": _svc_block(
                     host=host,
@@ -292,7 +301,8 @@ def _nodes_from_spec(
                 {
                     "title": f"Airflow · worker {i + 1}",
                     "role": f"worker-{i}",
-                    "status": "logical",
+                    "status": "Logical",
+                    "status_label": "Логическая",
                     "specs": specs_unit,
                     "service": _svc_block(
                         host=host,
@@ -317,7 +327,8 @@ def _nodes_from_spec(
             {
                 "title": "Superset · Web",
                 "role": "web",
-                "status": "planned",
+                "status": "Pending",
+                "status_label": "Ожидание",
                 "specs": specs_unit,
                 "service": _svc_block(
                     host=f"{stack_name}-superset.{domain}",
@@ -338,6 +349,25 @@ def _nodes_from_spec(
     return nodes
 
 
+def _status_label(phase: str | None, *, ready: bool | None = None, logical: bool = False) -> str:
+    if logical:
+        return "Логическая"
+    p = (phase or "").lower()
+    if p == "running":
+        return "Готова" if ready else "Запущена"
+    if p == "pending":
+        return "Ожидание"
+    if p == "failed":
+        return "Ошибка"
+    if p == "succeeded":
+        return "Завершена"
+    if p == "unknown":
+        return "Неизвестно"
+    if p == "logical":
+        return "Логическая"
+    return phase or "Ожидание"
+
+
 def enrich_nodes_with_pods(nodes: list[dict], pods: list[dict]) -> list[dict]:
     by_name = {p.get("name"): p for p in pods}
     out = []
@@ -345,16 +375,24 @@ def enrich_nodes_with_pods(nodes: list[dict], pods: list[dict]) -> list[dict]:
         n = dict(node)
         role = (n.get("role") or "").lower()
         live = None
+        if n.get("status") == "Logical":
+            out.append(n)
+            continue
         for pname, pdata in by_name.items():
             pl = pname.lower()
-            if role.startswith("replica") and "clickhouse" in pl:
-                # match index if present
-                idx = role.split("-")[-1]
-                if idx.isdigit() and pl.endswith(f"-{idx}") or f"-{idx}-" in pl or pl.endswith(idx):
-                    live = pdata
-                    break
+            if role.startswith("shard-") and "clickhouse" in pl:
+                # role: shard-{s}-replica-{r} → CHI pod …-{s}-{r}-0
+                try:
+                    parts = role.split("-")
+                    s_idx, r_idx = parts[1], parts[3]
+                    if f"-{s_idx}-{r_idx}-" in pl or pl.endswith(f"-{s_idx}-{r_idx}-0"):
+                        live = pdata
+                        break
+                except Exception:
+                    pass
                 if live is None and "clickhouse" in pl:
-                    live = pdata
+                    # fallback by order later
+                    pass
             elif role.startswith("broker") and "kafka" in pl and "ui" not in pl:
                 idx = role.split("-")[-1]
                 if idx.isdigit() and (pl.endswith(f"-{idx}") or f"-{idx}." in pl):
@@ -372,17 +410,42 @@ def enrich_nodes_with_pods(nodes: list[dict], pods: list[dict]) -> list[dict]:
             elif role == "web" and "superset" in pl:
                 live = pdata
                 break
+        if live is None and role.startswith("shard-") and "clickhouse" in role:
+            # Match remaining clickhouse pods by shard/replica ordinals from name chi-…-{s}-{r}-0
+            try:
+                parts = role.split("-")
+                s_idx, r_idx = parts[1], parts[3]
+                for pname, pdata in by_name.items():
+                    pl = pname.lower()
+                    if "clickhouse" not in pl:
+                        continue
+                    tokens = pl.split("-")
+                    if len(tokens) >= 3 and tokens[-3] == s_idx and tokens[-2] == r_idx:
+                        live = pdata
+                        break
+            except Exception:
+                pass
         if live:
-            n["status"] = live.get("phase", n.get("status"))
+            phase = live.get("phase") or n.get("status")
+            ready = live.get("ready")
+            n["status"] = phase
+            n["status_label"] = _status_label(phase, ready=ready)
+            n["ready"] = ready
             n["pod_ip"] = live.get("pod_ip")
             n["pod_name"] = live.get("name")
+            if live.get("ready_containers"):
+                n["ready_containers"] = live.get("ready_containers")
+            if live.get("reason"):
+                n["status_reason"] = live.get("reason")
             admin = dict(n.get("admin") or {})
-            # Prefer exact pod name in console URL once live pods are known.
             url = admin.get("console_url") or ""
             if "stack=" in url and live.get("name"):
                 stack_q = url.split("stack=", 1)[1].split("&", 1)[0]
                 admin["console_url"] = f"/console.html?stack={stack_q}&pod={live['name']}"
                 n["admin"] = admin
+        else:
+            n.setdefault("status", "Pending")
+            n.setdefault("status_label", _status_label(n.get("status")))
         out.append(n)
     return out
 
@@ -447,16 +510,35 @@ def list_namespace_pods(namespace: str) -> list[dict]:
 
         core, *_ = _get_k8s_clients()
         items = core.list_namespaced_pod(namespace).items
-        return [
-            {
-                "name": p.metadata.name,
-                "namespace": namespace,
-                "phase": p.status.phase,
-                "pod_ip": p.status.pod_ip,
-                "labels": dict(p.metadata.labels or {}),
-            }
-            for p in items
-        ]
+        out = []
+        for p in items:
+            total = len(p.status.container_statuses or []) or len(p.spec.containers or [])
+            ready_n = sum(1 for cs in (p.status.container_statuses or []) if cs.ready)
+            ready = bool(total and ready_n == total and (p.status.phase == "Running"))
+            reason = None
+            for cs in p.status.container_statuses or []:
+                waiting = (cs.state.waiting if cs.state else None)
+                if waiting and waiting.reason:
+                    reason = waiting.reason
+                    break
+            if not reason:
+                for cond in p.status.conditions or []:
+                    if cond.type == "Ready" and cond.status != "True" and cond.reason:
+                        reason = cond.reason
+                        break
+            out.append(
+                {
+                    "name": p.metadata.name,
+                    "namespace": namespace,
+                    "phase": p.status.phase,
+                    "ready": ready,
+                    "ready_containers": f"{ready_n}/{total}" if total else "0/0",
+                    "reason": reason,
+                    "pod_ip": p.status.pod_ip,
+                    "labels": dict(p.metadata.labels or {}),
+                }
+            )
+        return out
     except Exception:
         return []
 

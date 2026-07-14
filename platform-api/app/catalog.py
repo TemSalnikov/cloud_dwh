@@ -6,8 +6,19 @@ SERVICES = {
         "description": "OLAP columnar database for analytics",
         "icon": "database",
         "dependencies": [],
-        "defaults": {"replicas": 1, "cpu": "2", "memory": "8Gi", "storage": "50Gi"},
-        "limits": {"replicas": {"min": 1, "max": 4}, "cpu": {"min": 1, "max": 16}, "memory": {"min": "4Gi", "max": "32Gi"}},
+        "defaults": {
+            "replicas": 1,
+            "nodes": [{"role": "shard"}],
+            "cpu": "2",
+            "memory": "8Gi",
+            "storage": "50Gi",
+        },
+        "limits": {
+            "nodes": {"min": 1, "max": 8},
+            "replicas": {"min": 1, "max": 8},
+            "cpu": {"min": 1, "max": 16},
+            "memory": {"min": "4Gi", "max": "32Gi"},
+        },
     },
     "kafka": {
         "name": "Apache Kafka",
@@ -49,7 +60,12 @@ PRESETS = {
         "name": "Minimal (Dev)",
         "description": "Single-node dev stack, ~32 GB RAM",
         "services": {
-            "clickhouse": {"enabled": True, "replicas": 1, "resources": {"cpu": "2", "memory": "8Gi", "storage": "30Gi"}},
+            "clickhouse": {
+                "enabled": True,
+                "replicas": 1,
+                "nodes": [{"role": "shard"}],
+                "resources": {"cpu": "2", "memory": "8Gi", "storage": "30Gi"},
+            },
             "kafka": {"enabled": True, "brokers": 1, "resources": {"cpu": "1", "memory": "2Gi", "storage": "10Gi"}},
             "postgres": {"enabled": True, "resources": {"cpu": "1", "memory": "2Gi", "storage": "10Gi"}},
             "airflow": {"enabled": True, "workers": 1, "resources": {"cpu": "2", "memory": "4Gi"}},
@@ -60,7 +76,12 @@ PRESETS = {
         "name": "Standard",
         "description": "Balanced stack for staging, ~64 GB RAM",
         "services": {
-            "clickhouse": {"enabled": True, "replicas": 2, "resources": {"cpu": "4", "memory": "16Gi", "storage": "100Gi"}},
+            "clickhouse": {
+                "enabled": True,
+                "replicas": 2,
+                "nodes": [{"role": "shard"}, {"role": "replica"}],
+                "resources": {"cpu": "4", "memory": "16Gi", "storage": "100Gi"},
+            },
             "kafka": {"enabled": True, "brokers": 1, "resources": {"cpu": "2", "memory": "4Gi", "storage": "20Gi"}},
             "postgres": {"enabled": True, "resources": {"cpu": "2", "memory": "4Gi", "storage": "20Gi"}},
             "airflow": {"enabled": True, "workers": 2, "resources": {"cpu": "4", "memory": "8Gi"}},
@@ -71,7 +92,17 @@ PRESETS = {
         "name": "Full Production-like",
         "description": "Maximum on single node, ~96 GB RAM",
         "services": {
-            "clickhouse": {"enabled": True, "replicas": 4, "resources": {"cpu": "4", "memory": "16Gi", "storage": "200Gi"}},
+            "clickhouse": {
+                "enabled": True,
+                "replicas": 4,
+                "nodes": [
+                    {"role": "shard"},
+                    {"role": "replica"},
+                    {"role": "shard"},
+                    {"role": "replica"},
+                ],
+                "resources": {"cpu": "4", "memory": "16Gi", "storage": "200Gi"},
+            },
             "kafka": {"enabled": True, "brokers": 3, "resources": {"cpu": "2", "memory": "4Gi", "storage": "30Gi"}},
             "postgres": {"enabled": True, "resources": {"cpu": "2", "memory": "4Gi", "storage": "30Gi"}},
             "airflow": {"enabled": True, "workers": 4, "resources": {"cpu": "4", "memory": "8Gi"}},

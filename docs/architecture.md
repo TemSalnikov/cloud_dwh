@@ -194,16 +194,16 @@ Ingress annotations: `cert-manager.io/cluster-issuer: selfsigned`
 
 ### Биллинг (калькулятор)
 
-Ориентиры рынка 2026 ([VK Cloud](https://cloud.vk.com/pricelist/), [Selectel](https://selectel.ru/services/cloud/servers/)):
+Тарифы Cloud DWH (₽ / мес, прайс задаёт суперпользователь):
 
-| Ресурс | Default Cloud DWH | Рынок |
-|--------|-------------------|-------|
-| vCPU / мес | 780 ₽ | VK ~849 ₽ |
-| RAM Gi / мес | 210 ₽ | VK ~223 ₽ |
-| SSD Gi / мес | 12 ₽ | Selectel ~9–11, VK ~13 |
-| Managed service / мес | 490 ₽ | PaaS-надбавка |
+| Ресурс | Default |
+|--------|---------|
+| vCPU / мес | 780 ₽ |
+| RAM Gi / мес | 210 ₽ |
+| SSD Gi / мес | 12 ₽ |
+| Managed service / мес | 490 ₽ |
 
-При `stopped` / `blocked` compute не тарифицируется (как freeze у Selectel), storage остаётся. Прайс редактирует суперпользователь. Default admin: `admin@cloud-dwh.local` (см. `bootstrap_admin_*` в config).
+При `stopped` / `blocked` compute не тарифицируется, storage остаётся. Default admin: `admin@cloud-dwh.local` (см. `bootstrap_admin_*` в config).
 
 
 ## 9. Ограничения single-node
