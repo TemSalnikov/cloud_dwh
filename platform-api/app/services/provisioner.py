@@ -118,9 +118,6 @@ class StackProvisioner:
             "clickhouse_password": self.ch_password,
             "airflow_user": "admin",
             "airflow_password": "admin",
-            "ssh_host": self.server_ip,
-            "ssh_user": "user",
-            "ssh_command": f"ssh user@{self.server_ip}",
         }
         return endpoints
 

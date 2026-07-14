@@ -474,11 +474,15 @@
             }</div>` : '',
             s.example ? `<div><span class="k">Пример</span> <code>${escapeHtml(s.example)}</code></div>` : '',
           ].filter(Boolean).join('');
+          const consoleHref = a.console_url || '';
+          const consoleAbs = consoleHref
+            ? (consoleHref.startsWith('http') ? consoleHref : `${location.origin}${consoleHref}`)
+            : '';
           const adminLines = [
-            a.web_url ? `<div><span class="k">Консоль</span> <a href="${escapeHtml(a.web_url)}" target="_blank" rel="noopener">${escapeHtml(a.web_url)}</a></div>` : '',
-            a.web_user ? `<div><span class="k">Логин</span> <code>${escapeHtml(a.web_user)}</code></div>` : '',
-            a.web_password ? `<div><span class="k">Пароль</span> <code>${escapeHtml(a.web_password)}</code></div>` : '',
-            a.ssh_command ? `<div><span class="k">SSH на хост</span> <code>${escapeHtml(a.ssh_command)}</code></div>` : '',
+            consoleAbs ? `<div><span class="k">Bash-консоль</span> <a href="${escapeHtml(consoleHref)}" target="_blank" rel="noopener">${escapeHtml(consoleAbs)}</a></div>` : '',
+            a.web_url ? `<div><span class="k">Веб UI</span> <a href="${escapeHtml(a.web_url)}" target="_blank" rel="noopener">${escapeHtml(a.web_url)}</a></div>` : '',
+            a.web_user ? `<div><span class="k">Логин UI</span> <code>${escapeHtml(a.web_user)}</code></div>` : '',
+            a.web_password ? `<div><span class="k">Пароль UI</span> <code>${escapeHtml(a.web_password)}</code></div>` : '',
             a.web_note ? `<div class="stack-ns">${escapeHtml(a.web_note)}</div>` : '',
             a.hint ? `<div class="stack-ns">${escapeHtml(a.hint)}</div>` : '',
           ].filter(Boolean).join('');

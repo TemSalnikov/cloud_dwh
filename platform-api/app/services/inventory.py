@@ -76,20 +76,6 @@ def _domain() -> str:
     return settings.ingress_base_domain
 
 
-def _node_ssh_admin(title: str) -> dict:
-    """SSH to the platform VM (single-node). Owner administers via service ports + web UIs."""
-    return {
-        "ssh_host": _host(),
-        "ssh_user": "user",
-        "ssh_command": f"ssh user@{_host()}",
-        "title": title,
-        "hint": (
-            "SSH — на хост виртуальной машины кластера (node1). "
-            "Администрирование данных/топиков/дагов — через параметры сервиса и веб-консоль ниже."
-        ),
-    }
-
-
 def _svc_block(
     *,
     host: str,
@@ -113,10 +99,25 @@ def _svc_block(
     }
 
 
+def _console_admin(*, stack_id: str, pod_hint: str, web_url: str | None = None, web_user: str | None = None, web_password: str | None = None, web_note: str | None = None) -> dict:
+    """Admin block for owner: web UI + in-browser bash console (no host SSH)."""
+    console_path = f"/console.html?stack={stack_id}&pod={pod_hint}"
+    return {
+        "console_url": console_path,
+        "console_label": "Открыть bash-консоль ноды",
+        "web_url": web_url,
+        "web_user": web_user,
+        "web_password": web_password,
+        "web_note": web_note,
+        "hint": "Консоль открывается в браузере (shell внутри контейнера ноды). Доступ только владельцу стека и админу.",
+    }
+
+
 def _nodes_from_spec(
     key: str,
     cfg: dict,
     *,
+    stack_id: str,
     stack_name: str,
     namespace: str,
     endpoints: dict | None,
@@ -137,9 +138,9 @@ def _nodes_from_spec(
         password = creds.get("clickhouse_password")
         web = endpoints.get("clickhouse_web") or f"https://{stack_name}-ch.{domain}"
         for i in range(units):
-            # Shared LB today; label replica for clarity. Per-replica NodePorts can be added later.
             http_port = 8123
             native_port = 9000
+            pod_hint = f"clickhouse-replica-{i}"
             nodes.append(
                 {
                     "title": f"ClickHouse · реплика {i + 1}",
@@ -155,10 +156,7 @@ def _nodes_from_spec(
                         database="default",
                         url=f"http://{host}:{http_port}",
                         example=(
-                            f"curl 'http://{host}:{http_port}/?user={user}&password=***' "
-                            f"-d 'SELECT 1'"
-                            if not password
-                            else f"curl 'http://{host}:{http_port}/?user={user}&password={password}' -d 'SELECT 1'"
+                            f"curl 'http://{host}:{http_port}/?user={user}&password={password or '***'}' -d 'SELECT 1'"
                         ),
                     ),
                     "service_native": _svc_block(
@@ -171,13 +169,14 @@ def _nodes_from_spec(
                         url=f"clickhouse://{user}@{host}:{native_port}/default",
                         example=f"clickhouse-client -h {host} --port {native_port} -u {user}",
                     ),
-                    "admin": {
-                        **_node_ssh_admin(f"Реплика {i + 1}"),
-                        "web_url": web,
-                        "web_user": user,
-                        "web_password": password,
-                        "web_note": "HTTPS-консоль / HTTP API ClickHouse",
-                    },
+                    "admin": _console_admin(
+                        stack_id=stack_id,
+                        pod_hint=pod_hint,
+                        web_url=web,
+                        web_user=user,
+                        web_password=password,
+                        web_note="Веб/HTTP API ClickHouse",
+                    ),
                 }
             )
 
@@ -185,6 +184,7 @@ def _nodes_from_spec(
         ui = endpoints.get("kafka_ui") or f"https://{stack_name}-kafka-ui.{domain}"
         for i in range(units):
             port = 30993 + i
+            pod_hint = f"kafka-broker-{i}"
             nodes.append(
                 {
                     "title": f"Kafka · брокер {i + 1}",
@@ -198,13 +198,12 @@ def _nodes_from_spec(
                         url=f"{host}:{port}",
                         example=f"kcat -b {host}:{port} -L",
                     ),
-                    "admin": {
-                        **_node_ssh_admin(f"Брокер {i + 1}"),
-                        "web_url": ui,
-                        "web_user": None,
-                        "web_password": None,
-                        "web_note": "Kafka UI — топики, потребители, сообщения",
-                    },
+                    "admin": _console_admin(
+                        stack_id=stack_id,
+                        pod_hint=pod_hint,
+                        web_url=ui,
+                        web_note="Kafka UI — топики и сообщения",
+                    ),
                 }
             )
 
@@ -228,11 +227,11 @@ def _nodes_from_spec(
                     url=f"postgresql://{user}@{host}:{port}/dwh",
                     example=f"psql -h {host} -p {port} -U {user} -d dwh",
                 ),
-                "admin": {
-                    **_node_ssh_admin("PostgreSQL"),
-                    "web_url": None,
-                    "web_note": "Управление: psql / DBeaver / DataGrip по реквизитам слева",
-                },
+                "admin": _console_admin(
+                    stack_id=stack_id,
+                    pod_hint="postgres",
+                    web_note="SQL: psql / DBeaver по реквизитам слева; bash — через консоль",
+                ),
             }
         )
 
@@ -255,13 +254,14 @@ def _nodes_from_spec(
                     url=web,
                     example=web,
                 ),
-                "admin": {
-                    **_node_ssh_admin("Airflow Web"),
-                    "web_url": web,
-                    "web_user": af_user,
-                    "web_password": af_pass,
-                    "web_note": "UI: DAG, логи, переменные, пулы",
-                },
+                "admin": _console_admin(
+                    stack_id=stack_id,
+                    pod_hint="airflow-webserver",
+                    web_url=web,
+                    web_user=af_user,
+                    web_password=af_pass,
+                    web_note="UI: DAG, логи, переменные",
+                ),
             }
         )
         nodes.append(
@@ -277,13 +277,14 @@ def _nodes_from_spec(
                     url="scheduler (без внешнего порта)",
                     example="Управляется через Airflow UI",
                 ),
-                "admin": {
-                    **_node_ssh_admin("Airflow Scheduler"),
-                    "web_url": web,
-                    "web_user": af_user,
-                    "web_password": af_pass,
-                    "web_note": "Планировщик; задачи LocalExecutor выполняются здесь",
-                },
+                "admin": _console_admin(
+                    stack_id=stack_id,
+                    pod_hint="airflow-scheduler",
+                    web_url=web,
+                    web_user=af_user,
+                    web_password=af_pass,
+                    web_note="Планировщик задач",
+                ),
             }
         )
         for i in range(units):
@@ -299,13 +300,14 @@ def _nodes_from_spec(
                         protocol="ёмкость / биллинг",
                         example="Слот под параллельные задачи (LocalExecutor)",
                     ),
-                    "admin": {
-                        **_node_ssh_admin(f"Worker slot {i + 1}"),
-                        "web_url": web,
-                        "web_user": af_user,
-                        "web_password": af_pass,
-                        "web_note": "Отдельные worker-поды появятся при CeleryExecutor",
-                    },
+                    "admin": _console_admin(
+                        stack_id=stack_id,
+                        pod_hint="airflow-scheduler",
+                        web_url=web,
+                        web_user=af_user,
+                        web_password=af_pass,
+                        web_note="Отдельные worker-поды — при CeleryExecutor",
+                    ),
                 }
             )
 
@@ -324,11 +326,12 @@ def _nodes_from_spec(
                     url=web,
                     example=web,
                 ),
-                "admin": {
-                    **_node_ssh_admin("Superset"),
-                    "web_url": web,
-                    "web_note": "BI-консоль: датасеты, чарты, дашборды",
-                },
+                "admin": _console_admin(
+                    stack_id=stack_id,
+                    pod_hint="superset",
+                    web_url=web,
+                    web_note="BI-консоль",
+                ),
             }
         )
 
@@ -373,6 +376,13 @@ def enrich_nodes_with_pods(nodes: list[dict], pods: list[dict]) -> list[dict]:
             n["status"] = live.get("phase", n.get("status"))
             n["pod_ip"] = live.get("pod_ip")
             n["pod_name"] = live.get("name")
+            admin = dict(n.get("admin") or {})
+            # Prefer exact pod name in console URL once live pods are known.
+            url = admin.get("console_url") or ""
+            if "stack=" in url and live.get("name"):
+                stack_q = url.split("stack=", 1)[1].split("&", 1)[0]
+                admin["console_url"] = f"/console.html?stack={stack_q}&pod={live['name']}"
+                n["admin"] = admin
         out.append(n)
     return out
 
@@ -380,6 +390,7 @@ def enrich_nodes_with_pods(nodes: list[dict], pods: list[dict]) -> list[dict]:
 def build_services_inventory(
     spec: dict,
     *,
+    stack_id: str,
     stack_name: str,
     namespace: str,
     endpoints: dict | None,
@@ -396,7 +407,12 @@ def build_services_inventory(
             continue
         units = _unit_count(key, cfg)
         nodes = _nodes_from_spec(
-            key, cfg, stack_name=stack_name, namespace=namespace, endpoints=endpoints
+            key,
+            cfg,
+            stack_id=stack_id,
+            stack_name=stack_name,
+            namespace=namespace,
+            endpoints=endpoints,
         )
         if live_pods:
             related = [
@@ -480,7 +496,4 @@ def load_stack_credentials(namespace: str, endpoints: dict | None) -> dict:
         pass
     creds.setdefault("airflow_user", "admin")
     creds.setdefault("airflow_password", "admin")
-    creds.setdefault("ssh_host", settings.server_ip)
-    creds.setdefault("ssh_user", "user")
-    creds.setdefault("ssh_command", f"ssh user@{settings.server_ip}")
     return creds

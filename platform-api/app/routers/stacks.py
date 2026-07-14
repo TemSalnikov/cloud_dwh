@@ -90,6 +90,7 @@ def _to_response(
     live = list_namespace_pods(stack.namespace) if with_live_pods else None
     services = build_services_inventory(
         stack.spec,
+        stack_id=str(stack.id),
         stack_name=stack.name,
         namespace=stack.namespace,
         endpoints=stack.endpoints,

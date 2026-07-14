@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Cloud DWH — консоль ноды</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.min.css">
+  <style>
+    :root {
+      --bg: #0f1c20; --panel: #15262b; --ink: #e8f4f4; --muted: #8aa4a8; --accent: #2eb7b0;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: "IBM Plex Sans", system-ui, sans-serif; background: var(--bg); color: var(--ink); min-height: 100vh; display: flex; flex-direction: column; }
+    header { display: flex; justify-content: space-between; align-items: center; gap: 1rem; padding: 0.75rem 1.25rem; background: var(--panel); border-bottom: 1px solid #243a40; }
+    header h1 { font-size: 0.95rem; font-weight: 600; }
+    header .meta { font-size: 0.78rem; color: var(--muted); }
+    header a { color: var(--accent); text-decoration: none; font-size: 0.85rem; }
+    #terminal { flex: 1; padding: 0.5rem; }
+    .err { padding: 1rem; color: #ff8a80; }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>Консоль ноды</h1>
+      <div class="meta" id="meta">Подключение…</div>
+    </div>
+    <a href="/">← В панель</a>
+  </header>
+  <div id="terminal"></div>
+  <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.min.js"></script>
+  <script>
+    const params = new URLSearchParams(location.search);
+    const stack = params.get('stack');
+    const pod = params.get('pod') || params.get('target');
+    const token = localStorage.getItem('cloud_dwh_token');
+    const meta = document.getElementById('meta');
+
+    if (!token) {
+      document.getElementById('terminal').innerHTML = '<div class="err">Нужна авторизация. Войдите в панель и откройте консоль снова.</div>';
+    } else if (!stack || !pod) {
+      document.getElementById('terminal').innerHTML = '<div class="err">В URL нужны параметры stack и pod.</div>';
+    } else {
+      meta.textContent = `stack=${stack} · target=${pod}`;
+      const term = new Terminal({
+        cursorBlink: true,
+        fontSize: 14,
+        fontFamily: 'JetBrains Mono, Menlo, Consolas, monospace',
+        theme: { background: '#0f1c20', foreground: '#e8f4f4', cursor: '#2eb7b0' },
+      });
+      const fit = new FitAddon.FitAddon();
+      term.loadAddon(fit);
+      term.open(document.getElementById('terminal'));
+      fit.fit();
+      window.addEventListener('resize', () => fit.fit());
+
+      const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const qs = new URLSearchParams({ token, stack, pod });
+      const ws = new WebSocket(`${proto}//${location.host}/api/v1/console/ws?${qs}`);
+      ws.onopen = () => term.writeln('\r\n[ui] WebSocket connected');
+      ws.onmessage = (ev) => term.write(ev.data);
+      ws.onerror = () => term.writeln('\r\n[ui] WebSocket error');
+      ws.onclose = () => term.writeln('\r\n[ui] disconnected');
+      term.onData((data) => { if (ws.readyState === WebSocket.OPEN) ws.send(data); });
+      term.focus();
+    }
+  </script>
+</body>
+</html>
