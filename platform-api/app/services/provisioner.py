@@ -915,19 +915,109 @@ class StackProvisioner:
     async def stop(self):
         import asyncio
 
-        await asyncio.to_thread(self._scale_namespace_workloads, target=0, save_prev=True)
+        await asyncio.to_thread(self._scale_namespace_workloads, target=0, save_prev=True, delete_pods=True)
 
     async def start(self):
         import asyncio
 
-        await asyncio.to_thread(self._scale_namespace_workloads, target=None, save_prev=False)
+        await asyncio.to_thread(self._scale_namespace_workloads, target=None, save_prev=False, delete_pods=False)
 
-    async def restart(self):
+    async def restart(self, progress=None, hard: bool = False, wait_ready_sec: int = 180):
+        """Normal restart = scale off → on. Hard = delete pods (emergency)."""
         import asyncio
 
-        await asyncio.to_thread(self._restart_pods)
+        if hard:
+            await asyncio.to_thread(
+                self._restart_pods,
+                False,
+                0,
+                progress,
+                wait_ready_sec,
+                True,
+            )
+        else:
+            await asyncio.to_thread(self._power_cycle, progress, wait_ready_sec)
 
-    def _scale_namespace_workloads(self, target: int | None, save_prev: bool):
+    def _power_cycle(self, progress=None, wait_ready_sec: int = 180):
+        """Restart by powering workloads off then on (no pod delete)."""
+        import time
+
+        def report(msg: str):
+            logger.info("power-cycle %s: %s", self.namespace, msg)
+            if progress:
+                try:
+                    progress(msg)
+                except Exception:
+                    pass
+
+        before = [
+            p
+            for p in self.core.list_namespaced_pod(self.namespace).items
+            if (p.status.phase or "") not in ("Succeeded", "Failed")
+        ]
+        expected = max(1, len(before))
+        report(f"Перезагрузка выкл/вкл: сейчас {len(before)} под(ов)")
+
+        report("Выключение: scale workloads → 0…")
+        self._scale_namespace_workloads(target=0, save_prev=True, delete_pods=False)
+
+        off_deadline = time.time() + min(90, max(30, wait_ready_sec // 2))
+        while time.time() < off_deadline:
+            items = self.core.list_namespaced_pod(self.namespace).items
+            running = [
+                p
+                for p in items
+                if (p.status.phase or "") == "Running" and not p.metadata.deletion_timestamp
+            ]
+            terminating = [p for p in items if p.metadata.deletion_timestamp]
+            report(f"Выключение… Running {len(running)}, terminating {len(terminating)}")
+            if len(running) == 0:
+                break
+            time.sleep(3)
+        else:
+            report("Выключение неполное — продолжаем включение")
+
+        # Brief settle so controllers accept scale-up after scale-down
+        time.sleep(2)
+        report("Включение: восстановление replica counts…")
+        self._scale_namespace_workloads(target=None, save_prev=False, delete_pods=False)
+
+        report("Ожидание готовности подов…")
+        deadline = time.time() + max(30, int(wait_ready_sec))
+        last_msg = ""
+        while time.time() < deadline:
+            items = self.core.list_namespaced_pod(self.namespace).items
+            active = [
+                p
+                for p in items
+                if (p.status.phase or "") not in ("Succeeded", "Failed")
+            ]
+            terminating = [p for p in active if p.metadata.deletion_timestamp]
+            ready = [p for p in active if self._pod_ready(p) and not p.metadata.deletion_timestamp]
+            pending = [p for p in active if not p.metadata.deletion_timestamp and p not in ready]
+            msg = (
+                f"Готово {len(ready)}/{max(expected, len(active))}"
+                f" · terminating {len(terminating)} · pending {len(pending)}"
+            )
+            if msg != last_msg:
+                report(msg)
+                last_msg = msg
+            if not terminating and len(ready) >= expected:
+                report(f"Перезагрузка завершена: {len(ready)} под(ов) Ready")
+                return
+            if not terminating and ready and len(ready) == len(active) and len(ready) >= max(1, expected // 2):
+                report(f"Перезагрузка завершена: {len(ready)} Ready из {len(active)}")
+                return
+            time.sleep(3)
+
+        items = self.core.list_namespaced_pod(self.namespace).items
+        ready_n = sum(1 for p in items if self._pod_ready(p))
+        raise TimeoutError(
+            f"Таймаут перезагрузки выкл/вкл ({wait_ready_sec}с): Ready {ready_n}/{expected}. "
+            "Можно выполнить жёсткую перезагрузку (удаление подов)."
+        )
+
+    def _scale_namespace_workloads(self, target: int | None, save_prev: bool, delete_pods: bool = True):
         """Scale Deployments/StatefulSets. target=None restores previous replica counts."""
         deps = self.apps.list_namespaced_deployment(self.namespace).items
         for dep in deps:
@@ -1064,18 +1154,106 @@ class StackProvisioner:
             if e.status not in (404, 403):
                 logger.warning("Kafka scale patch failed: %s", e)
 
-        if save_prev and target == 0:
+        if delete_pods and save_prev and target == 0:
             # Ensure compute is down even if CR controllers fight back briefly
-            self._restart_pods(delete_only=True)
+            self._restart_pods(delete_only=True, grace_period_seconds=0)
 
-    def _restart_pods(self, delete_only: bool = False):
+    def _pod_ready(self, pod) -> bool:
+        if pod.status.phase != "Running":
+            return False
+        statuses = pod.status.container_statuses or []
+        if not statuses:
+            return False
+        return all(cs.ready for cs in statuses)
+
+    def _restart_pods(
+        self,
+        delete_only: bool = False,
+        grace_period_seconds: int = 15,
+        progress=None,
+        wait_ready_sec: int = 180,
+        hard: bool = False,
+    ):
+        import time
+
+        def report(msg: str):
+            logger.info("restart %s: %s", self.namespace, msg)
+            if progress:
+                try:
+                    progress(msg)
+                except Exception:
+                    pass
+
         pods = self.core.list_namespaced_pod(self.namespace).items
-        for pod in pods:
+        # Skip finished jobs
+        pods = [
+            p
+            for p in pods
+            if (p.status.phase or "") not in ("Succeeded", "Failed")
+        ]
+        expected = len(pods)
+        mode = "жёсткая (grace=0)" if hard or grace_period_seconds == 0 else f"grace={grace_period_seconds}s"
+        report(f"Перезагрузка: найдено {expected} под(ов), режим {mode}")
+
+        for i, pod in enumerate(pods, start=1):
+            name = pod.metadata.name
+            report(f"Удаление пода {i}/{expected}: {name}")
             try:
-                self.core.delete_namespaced_pod(pod.metadata.name, self.namespace)
+                self.core.delete_namespaced_pod(
+                    name,
+                    self.namespace,
+                    grace_period_seconds=grace_period_seconds,
+                    propagation_policy="Background",
+                    _request_timeout=30,
+                )
             except ApiException as e:
                 if e.status != 404:
-                    logger.warning("Pod delete failed %s: %s", pod.metadata.name, e)
+                    logger.warning("Pod delete failed %s: %s", name, e)
+                    report(f"Ошибка удаления {name}: {e.reason or e.status}")
+
         if delete_only:
+            report("Поды удалены (режим stop)")
             return
+
+        report("Ожидание пересоздания и готовности подов…")
+        deadline = time.time() + max(30, int(wait_ready_sec))
+        last_msg = ""
+        while time.time() < deadline:
+            items = self.core.list_namespaced_pod(self.namespace).items
+            active = [
+                p
+                for p in items
+                if (p.status.phase or "") not in ("Succeeded", "Failed")
+            ]
+            terminating = [p for p in active if p.metadata.deletion_timestamp]
+            ready = [p for p in active if self._pod_ready(p) and not p.metadata.deletion_timestamp]
+            pending = [
+                p
+                for p in active
+                if not p.metadata.deletion_timestamp and p not in ready
+            ]
+            msg = (
+                f"Готово {len(ready)}/{max(expected, len(active))}"
+                f" · terminating {len(terminating)} · pending {len(pending)}"
+            )
+            if msg != last_msg:
+                report(msg)
+                last_msg = msg
+            # Success: no terminating leftovers and enough ready pods
+            if not terminating and len(ready) >= max(1, expected):
+                report(f"Перезагрузка завершена: {len(ready)} под(ов) Ready")
+                return
+            # Soft success: no terminating, all current pods ready, at least one
+            if not terminating and ready and len(ready) == len(active) and len(ready) >= max(1, expected // 2):
+                report(f"Перезагрузка завершена (частично): {len(ready)} Ready из {len(active)}")
+                return
+            time.sleep(3)
+
+        # Timeout — leave controllers to finish; surface clear error for lifecycle
+        items = self.core.list_namespaced_pod(self.namespace).items
+        ready_n = sum(1 for p in items if self._pod_ready(p))
+        raise TimeoutError(
+            f"Таймаут перезагрузки ({wait_ready_sec}с): Ready {ready_n}/{expected}. "
+            "Можно выполнить жёсткую перезагрузку подов."
+        )
 

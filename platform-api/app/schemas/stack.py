@@ -137,3 +137,13 @@ class BlockRequest(BaseModel):
 class ForceStatusRequest(BaseModel):
     status: str = Field(pattern=r"^(running|stopped|failed|blocked)$")
     message: str | None = Field(default=None, max_length=500)
+
+
+class ForceRestartRequest(BaseModel):
+    hard: bool = True
+    wait_ready_sec: int = Field(default=180, ge=30, le=600)
+
+
+class UnstickRequest(BaseModel):
+    status: str = Field(default="running", pattern=r"^(running|failed|stopped)$")
+    message: str | None = Field(default=None, max_length=500)

@@ -594,6 +594,9 @@
           const busy = ['deploying','pending','deleting','updating'].includes(s.status);
           const blocked = s.status === 'blocked';
           const stuck = ['updating','deploying','pending'].includes(s.status);
+          const ageSec = s.updated_at ? Math.max(0, Math.floor((Date.now() - new Date(s.updated_at).getTime()) / 1000)) : 0;
+          const ageLabel = ageSec < 60 ? `${ageSec}с` : `${Math.floor(ageSec / 60)} мин ${ageSec % 60}с`;
+          const longStuck = stuck && ageSec >= 90;
           return `<article class="stack-card">
             <div class="stack-card-top">
               <div>
@@ -604,13 +607,19 @@
             </div>
             ${costBlock(s.cost)}
             ${blocked && s.blocked_reason ? `<div class="alert alert-error">${escapeHtml(s.blocked_reason)}</div>` : ''}
-            ${stuck ? `<div class="alert alert-warn">Операция долгая или зависла. Можно удалить стек${isAdmin ? ' или снять статус в Админ' : ''}.</div>` : ''}
+            ${stuck ? `<div class="alert alert-warn">
+              <strong>Операция в процессе</strong> · прошло ${escapeHtml(ageLabel)}
+              <div style="margin-top:.35rem">${escapeHtml(s.status_message || 'Нет детализации…')}</div>
+              ${longStuck ? '<div style="margin-top:.35rem">Похоже на зависание — можно снять статус или выполнить жёсткую перезагрузку подов без удаления стека.</div>' : ''}
+            </div>` : ''}
+            ${!stuck && s.status_message ? `<p style="margin-top:.6rem;font-size:.84rem;color:var(--muted)">${escapeHtml(s.status_message)}</p>` : ''}
             ${s.services && s.services.length ? renderServicesDetail(s.services) : (!busy && s.endpoints ? renderEndpointsTable(s.endpoints) : '')}
-            ${s.status_message && !blocked ? `<p style="margin-top:.6rem;font-size:.84rem;color:var(--muted)">${escapeHtml(s.status_message)}</p>` : ''}
             <div class="stack-actions">
               ${s.status === 'running' ? `<button class="btn btn-ghost btn-sm" onclick="stackAction('${s.id}','stop')">Остановить</button>` : ''}
               ${s.status === 'stopped' ? `<button class="btn btn-primary btn-sm" onclick="stackAction('${s.id}','start')">Запустить</button>` : ''}
-              ${['running','failed'].includes(s.status) ? `<button class="btn btn-ghost btn-sm" onclick="stackAction('${s.id}','restart')">Перезагрузить</button>` : ''}
+              ${['running','failed'].includes(s.status) ? `<button class="btn btn-ghost btn-sm" onclick="stackAction('${s.id}','restart')" title="Выключить и включить workloads">Перезагрузить</button>` : ''}
+              ${['running','failed','updating','deploying'].includes(s.status) ? `<button class="btn btn-warn btn-sm" onclick="forceRestartStack('${s.id}')" title="Удалить поды и дождаться пересоздания">Жёсткая перезагрузка</button>` : ''}
+              ${stuck ? `<button class="btn btn-ghost btn-sm" onclick="unstickStack('${s.id}','running')">Снять зависание</button>` : ''}
               ${['running','failed'].includes(s.status) ? `<button class="btn btn-ghost btn-sm" onclick="editStack('${s.id}')">Изменить</button>` : ''}
               <button class="btn btn-danger btn-sm" ${blocked && !isAdmin ? 'disabled' : ''} onclick="deleteStack('${s.id}','${escapeHtml(s.name)}')">Удалить</button>
             </div>
@@ -629,6 +638,28 @@
     async function stackAction(id, action) {
       try {
         await fetchJSON(`/stacks/${id}/${action}`, { method: 'POST' });
+        loadStacks(); loadQuota();
+      } catch (e) { alert(e.message); }
+    }
+
+    async function forceRestartStack(id) {
+      if (!confirm('Жёсткая перезагрузка удалит поды и дождётся пересоздания. Для обычного выкл/вкл используйте «Перезагрузить». Продолжить?')) return;
+      try {
+        await fetchJSON(`/stacks/${id}/force-restart`, {
+          method: 'POST',
+          body: JSON.stringify({ hard: true, wait_ready_sec: 180 }),
+        });
+        loadStacks(); loadQuota();
+      } catch (e) { alert(e.message); }
+    }
+
+    async function unstickStack(id, status) {
+      if (!confirm(`Снять зависание и поставить статус «${status}»? Затем можно сделать жёсткую перезагрузку.`)) return;
+      try {
+        await fetchJSON(`/stacks/${id}/unstick`, {
+          method: 'POST',
+          body: JSON.stringify({ status }),
+        });
         loadStacks(); loadQuota();
       } catch (e) { alert(e.message); }
     }
@@ -1005,7 +1036,7 @@
             if (currentUser?.is_superuser && !document.getElementById('page-admin').classList.contains('hidden')) {
               loadAdmin();
             }
-          }, 12000);
+          }, 5000);
           return;
         } catch (_) { logout(false); }
       }

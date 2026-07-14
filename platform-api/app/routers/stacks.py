@@ -14,9 +14,11 @@ from app.models.user import PricingSettings, User
 from app.schemas.stack import (
     CostEstimate,
     EstimateRequest,
+    ForceRestartRequest,
     StackCreate,
     StackResponse,
     StackUpdate,
+    UnstickRequest,
 )
 from app.services.inventory import build_services_inventory, list_namespace_pods
 from app.services.pricing import DEFAULT_PRICES, estimate_cost
@@ -153,7 +155,19 @@ async def _deploy_stack(stack_id, name: str, spec: dict):
         await db.commit()
 
 
-async def _run_lifecycle(stack_id, action: str):
+async def _set_stack_message(stack_id, message: str):
+    from app.database import SessionLocal
+
+    async with SessionLocal() as db:
+        result = await db.execute(select(Stack).where(Stack.id == stack_id))
+        stack = result.scalar_one_or_none()
+        if not stack:
+            return
+        stack.status_message = message
+        await db.commit()
+
+
+async def _run_lifecycle(stack_id, action: str, *, hard: bool = False, wait_ready_sec: int = 180):
     from app.database import SessionLocal
 
     async with SessionLocal() as db:
@@ -164,22 +178,50 @@ async def _run_lifecycle(stack_id, action: str):
         try:
             provisioner = StackProvisioner(str(stack.id), stack.name, stack.spec)
             provisioner.namespace = stack.namespace
+            loop = asyncio.get_running_loop()
+
+            def progress(msg: str):
+                fut = asyncio.run_coroutine_threadsafe(_set_stack_message(stack_id, msg), loop)
+                try:
+                    fut.result(timeout=15)
+                except Exception:
+                    pass
+
             if action == "stop":
+                stack.status_message = "Остановка workloads…"
+                await db.commit()
                 await provisioner.stop()
                 stack.status = StackStatus.stopped
+                stack.status_message = "Остановлен"
             elif action == "start":
+                stack.status_message = "Запуск workloads…"
+                await db.commit()
                 await provisioner.start()
                 stack.status = StackStatus.running
+                stack.status_message = "Запущен"
             elif action == "restart":
-                await provisioner.restart()
+                mode = "жёсткая (удаление подов)" if hard else "выключение → включение"
+                stack.status_message = f"Старт перезагрузки ({mode})…"
+                await db.commit()
+                await provisioner.restart(
+                    progress=progress,
+                    hard=hard,
+                    wait_ready_sec=wait_ready_sec,
+                )
                 stack.status = StackStatus.running
+                stack.status_message = (
+                    "Жёсткая перезагрузка завершена" if hard else "Перезагрузка (выкл/вкл) завершена"
+                )
             elif action == "redeploy":
                 stack.status = StackStatus.updating
+                stack.status_message = "Повторный деплой конфигурации…"
                 await db.commit()
                 endpoints = await provisioner.deploy()
                 stack.endpoints = endpoints
                 stack.status = StackStatus.running
-            stack.status_message = None
+                stack.status_message = "Деплой завершён"
+            else:
+                stack.status_message = f"Unknown action: {action}"
         except Exception as e:
             logger.exception("Lifecycle %s failed for %s", action, stack.name)
             stack.status = StackStatus.failed
@@ -350,11 +392,76 @@ async def restart_stack(
     if stack.status not in (StackStatus.running, StackStatus.failed):
         raise HTTPException(409, "Restart is available for running or failed stacks")
     stack.status = StackStatus.updating
-    stack.status_message = "Restarting pods"
+    stack.status_message = "Перезагрузка: выключение → включение workloads…"
     await db.commit()
     background_tasks.add_task(_run_lifecycle, stack.id, "restart")
     prices = await _load_prices(db)
     return _to_response(stack, prices)
+
+
+@router.post("/stacks/{stack_id}/force-restart", response_model=StackResponse)
+async def force_restart_stack(
+    stack_id: str,
+    background_tasks: BackgroundTasks,
+    body: ForceRestartRequest,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Force restart even if stuck. hard=true deletes pods; hard=false is scale off/on."""
+    stack = await _get_owned_stack(stack_id, user, db)
+    if stack.status == StackStatus.blocked and not user.is_superuser:
+        raise HTTPException(403, "Stack is blocked")
+    if stack.status == StackStatus.deleting:
+        raise HTTPException(409, "Stack is deleting")
+
+    hard = bool(body.hard)
+    stack.status = StackStatus.updating
+    stack.status_message = (
+        "Жёсткая перезагрузка: удаление подов…"
+        if hard
+        else "Принудительная перезагрузка: выключение → включение…"
+    )
+    await db.commit()
+    background_tasks.add_task(
+        _run_lifecycle,
+        stack.id,
+        "restart",
+        hard=hard,
+        wait_ready_sec=body.wait_ready_sec,
+    )
+    prices = await _load_prices(db)
+    return _to_response(stack, prices)
+
+
+@router.post("/stacks/{stack_id}/unstick", response_model=StackResponse)
+async def unstick_stack(
+    stack_id: str,
+    body: UnstickRequest,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Owner can clear a hung updating/deploying/pending status without deleting the stack."""
+    stack = await _get_owned_stack(stack_id, user, db)
+    if stack.status not in (
+        StackStatus.updating,
+        StackStatus.deploying,
+        StackStatus.pending,
+    ):
+        raise HTTPException(409, f"Unstick is only for busy stacks (now: {stack.status.value})")
+    try:
+        new_status = StackStatus(body.status)
+    except ValueError as exc:
+        raise HTTPException(400, f"Invalid status: {body.status}") from exc
+
+    stack.status = new_status
+    stack.status_message = body.message or (
+        f"Статус снят вручную → {new_status.value}. "
+        "При необходимости выполните жёсткую перезагрузку подов."
+    )
+    await db.commit()
+    await db.refresh(stack)
+    prices = await _load_prices(db)
+    return _to_response(stack, prices, user.email)
 
 
 async def _delete_namespace(namespace: str, name: str):
