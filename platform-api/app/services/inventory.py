@@ -1,17 +1,16 @@
-"""Build per-service inventory: nodes, specs, connection, cost."""
+"""Owner-facing service inventory: connection credentials + admin access."""
 
 from __future__ import annotations
 
 from app.config import settings
-from app.services.pricing import DEFAULT_PRICES, estimate_cost, parse_cpu, parse_gi
+from app.services.pricing import DEFAULT_PRICES, parse_cpu, parse_gi
 
 SERVICE_META = {
-    "clickhouse": {"name": "ClickHouse", "ports": {"http": 8123, "native": 9000}},
-    "kafka": {"name": "Apache Kafka", "ports": {"bootstrap": 9094}},
-    "postgres": {"name": "PostgreSQL", "ports": {"sql": 5432}},
-    "airflow": {"name": "Apache Airflow", "ports": {"web": 8080}},
-    "superset": {"name": "Apache Superset", "ports": {"web": 8088}},
-    "redis": {"name": "Redis", "ports": {"redis": 6379}},
+    "clickhouse": {"name": "ClickHouse"},
+    "kafka": {"name": "Apache Kafka"},
+    "postgres": {"name": "PostgreSQL"},
+    "airflow": {"name": "Apache Airflow"},
+    "superset": {"name": "Apache Superset"},
 }
 
 
@@ -21,38 +20,21 @@ def _unit_count(key: str, cfg: dict) -> int:
     if key == "kafka":
         return max(1, int(cfg.get("brokers") or 1))
     if key == "airflow":
-        # webserver + scheduler + N workers (workers billed; LocalExecutor runs tasks on scheduler)
         return max(1, int(cfg.get("workers") or 1))
     return 1
 
 
 def _specs_text(key: str, cfg: dict, units: int) -> str:
     res = cfg.get("resources") or {}
-    cpu = res.get("cpu", "—")
-    mem = res.get("memory", "—")
-    storage = res.get("storage")
-    parts = [f"{units}×", f"CPU {cpu}", f"RAM {mem}"]
-    if storage:
-        parts.append(f"disk {storage}")
+    cpu, mem, storage = res.get("cpu", "—"), res.get("memory", "—"), res.get("storage")
+    base = f"CPU {cpu}, RAM {mem}" + (f", диск {storage}" if storage else "")
     if key == "clickhouse":
-        return f"{units} replica(s): " + ", ".join(parts[1:])
+        return f"{units} реплик(и): {base} на каждую"
     if key == "kafka":
-        return f"{units} broker(s): " + ", ".join(parts[1:])
+        return f"{units} брокер(а): {base} на каждый"
     if key == "airflow":
-        return f"web+scheduler + {units} worker budget: " + ", ".join(parts[1:])
-    return ", ".join(parts[1:])
-
-
-def _ssh_hints(namespace: str, pod_name: str) -> dict:
-    server_ip = settings.server_ip
-    return {
-        "node": f"ssh user@{server_ip}",
-        "pod": f"kubectl --kubeconfig=/etc/kubernetes/admin.conf -n {namespace} exec -it {pod_name} -- /bin/sh",
-        "note": (
-            "SSH в приложение обычно недоступен (containers без sshd). "
-            "Используйте SSH на ноду или kubectl exec в pod."
-        ),
-    }
+        return f"Web + Scheduler, ёмкость {units} worker: {base}"
+    return base
 
 
 def _cost_for_service(key: str, cfg: dict, prices: dict) -> dict:
@@ -67,19 +49,67 @@ def _cost_for_service(key: str, cfg: dict, prices: dict) -> dict:
     compute = cpu * float(p["vcpu_month"]) + ram * float(p["ram_gb_month"])
     stor = storage * float(p["storage_gb_month"])
     managed = float(p["service_month"])
-    monthly = round(compute + stor + managed, 2)
     return {
         "cpu": round(cpu, 2),
         "memory_gb": round(ram, 2),
         "storage_gb": round(storage, 2),
         "units": units,
-        "monthly": monthly,
+        "monthly": round(compute + stor + managed, 2),
         "currency": p.get("currency", "RUB"),
         "lines": {
             "compute": round(compute, 2),
             "storage": round(stor, 2),
             "managed": round(managed, 2),
         },
+    }
+
+
+def _creds(endpoints: dict | None) -> dict:
+    return (endpoints or {}).get("credentials") or {}
+
+
+def _host() -> str:
+    return settings.server_ip
+
+
+def _domain() -> str:
+    return settings.ingress_base_domain
+
+
+def _node_ssh_admin(title: str) -> dict:
+    """SSH to the platform VM (single-node). Owner administers via service ports + web UIs."""
+    return {
+        "ssh_host": _host(),
+        "ssh_user": "user",
+        "ssh_command": f"ssh user@{_host()}",
+        "title": title,
+        "hint": (
+            "SSH — на хост виртуальной машины кластера (node1). "
+            "Администрирование данных/топиков/дагов — через параметры сервиса и веб-консоль ниже."
+        ),
+    }
+
+
+def _svc_block(
+    *,
+    host: str,
+    port: int | str,
+    protocol: str,
+    username: str | None = None,
+    password: str | None = None,
+    database: str | None = None,
+    url: str | None = None,
+    example: str | None = None,
+) -> dict:
+    return {
+        "host": host,
+        "port": str(port),
+        "protocol": protocol,
+        "username": username,
+        "password": password,
+        "database": database,
+        "url": url or f"{host}:{port}",
+        "example": example,
     }
 
 
@@ -94,149 +124,256 @@ def _nodes_from_spec(
     units = _unit_count(key, cfg)
     res = cfg.get("resources") or {}
     endpoints = endpoints or {}
-    base = settings.server_ip
-    domain = settings.ingress_base_domain
-    nodes = []
+    creds = _creds(endpoints)
+    host = _host()
+    domain = _domain()
+    nodes: list[dict] = []
+    specs_unit = f"CPU {res.get('cpu', '—')}, RAM {res.get('memory', '—')}" + (
+        f", диск {res.get('storage')}" if res.get("storage") else ""
+    )
 
     if key == "clickhouse":
+        user = creds.get("clickhouse_user") or "dwh"
+        password = creds.get("clickhouse_password")
+        web = endpoints.get("clickhouse_web") or f"https://{stack_name}-ch.{domain}"
         for i in range(units):
-            pod = f"chi-clickhouse-dwh-0-{i}"
+            # Shared LB today; label replica for clarity. Per-replica NodePorts can be added later.
+            http_port = 8123
+            native_port = 9000
             nodes.append(
                 {
-                    "name": pod,
+                    "title": f"ClickHouse · реплика {i + 1}",
                     "role": f"replica-{i}",
                     "status": "planned",
-                    "resources": dict(res),
-                    "connect": {
-                        "http_lb": endpoints.get("clickhouse") or f"{base}:8123",
-                        "native_lb": f"{base}:9000",
-                        "web": endpoints.get("clickhouse_web")
-                        or f"https://{stack_name}-ch.{domain}",
-                        "internal_http": f"clickhouse-clickhouse.{namespace}.svc:8123",
-                        "internal_native": f"clickhouse-clickhouse.{namespace}.svc:9000",
-                        "pod_hint": f"{pod}.{namespace} (operator may use slightly different name)",
+                    "specs": specs_unit,
+                    "service": _svc_block(
+                        host=host,
+                        port=http_port,
+                        protocol="HTTP (ClickHouse)",
+                        username=user,
+                        password=password,
+                        database="default",
+                        url=f"http://{host}:{http_port}",
+                        example=(
+                            f"curl 'http://{host}:{http_port}/?user={user}&password=***' "
+                            f"-d 'SELECT 1'"
+                            if not password
+                            else f"curl 'http://{host}:{http_port}/?user={user}&password={password}' -d 'SELECT 1'"
+                        ),
+                    ),
+                    "service_native": _svc_block(
+                        host=host,
+                        port=native_port,
+                        protocol="Native TCP",
+                        username=user,
+                        password=password,
+                        database="default",
+                        url=f"clickhouse://{user}@{host}:{native_port}/default",
+                        example=f"clickhouse-client -h {host} --port {native_port} -u {user}",
+                    ),
+                    "admin": {
+                        **_node_ssh_admin(f"Реплика {i + 1}"),
+                        "web_url": web,
+                        "web_user": user,
+                        "web_password": password,
+                        "web_note": "HTTPS-консоль / HTTP API ClickHouse",
                     },
-                    "ssh": _ssh_hints(namespace, pod),
                 }
             )
+
     elif key == "kafka":
+        ui = endpoints.get("kafka_ui") or f"https://{stack_name}-kafka-ui.{domain}"
         for i in range(units):
-            pod = f"{stack_name}-kafka-{i}"
-            # Strimzi advertised external often SERVER_IP:30993+i style in this project
+            port = 30993 + i
             nodes.append(
                 {
-                    "name": pod,
+                    "title": f"Kafka · брокер {i + 1}",
                     "role": f"broker-{i}",
                     "status": "planned",
-                    "resources": dict(res),
-                    "connect": {
-                        "bootstrap_lb": endpoints.get("kafka") or f"{base}:30993",
-                        "broker_external": f"{base}:{30993 + i}",
-                        "internal": f"{stack_name}-kafka-bootstrap.{namespace}.svc:9092",
-                        "ui": endpoints.get("kafka_ui")
-                        or f"https://{stack_name}-kafka-ui.{domain}",
+                    "specs": specs_unit,
+                    "service": _svc_block(
+                        host=host,
+                        port=port,
+                        protocol="Kafka PLAINTEXT",
+                        url=f"{host}:{port}",
+                        example=f"kcat -b {host}:{port} -L",
+                    ),
+                    "admin": {
+                        **_node_ssh_admin(f"Брокер {i + 1}"),
+                        "web_url": ui,
+                        "web_user": None,
+                        "web_password": None,
+                        "web_note": "Kafka UI — топики, потребители, сообщения",
                     },
-                    "ssh": _ssh_hints(namespace, pod),
                 }
             )
+
     elif key == "postgres":
-        pod = "postgres-1"
+        user = creds.get("postgres_user") or "dwh"
+        password = creds.get("postgres_password")
+        port = 5432
         nodes.append(
             {
-                "name": pod,
+                "title": "PostgreSQL · primary",
                 "role": "primary",
                 "status": "planned",
-                "resources": dict(res),
-                "connect": {
-                    "sql": endpoints.get("postgres") or f"{base}:5432",
-                    "internal": f"postgres-rw.{namespace}.svc:5432",
-                    "user": "dwh",
+                "specs": specs_unit,
+                "service": _svc_block(
+                    host=host,
+                    port=port,
+                    protocol="PostgreSQL",
+                    username=user,
+                    password=password,
+                    database="dwh",
+                    url=f"postgresql://{user}@{host}:{port}/dwh",
+                    example=f"psql -h {host} -p {port} -U {user} -d dwh",
+                ),
+                "admin": {
+                    **_node_ssh_admin("PostgreSQL"),
+                    "web_url": None,
+                    "web_note": "Управление: psql / DBeaver / DataGrip по реквизитам слева",
                 },
-                "ssh": _ssh_hints(namespace, pod),
             }
         )
+
     elif key == "airflow":
+        web = endpoints.get("airflow") or f"https://{stack_name}-airflow.{domain}"
+        af_user = creds.get("airflow_user") or "admin"
+        af_pass = creds.get("airflow_password") or "admin"
         nodes.append(
             {
-                "name": "airflow-webserver",
+                "title": "Airflow · Webserver",
                 "role": "webserver",
                 "status": "planned",
-                "resources": {"cpu": "500m", "memory": "1Gi"},
-                "connect": {
-                    "web": endpoints.get("airflow")
-                    or f"https://{stack_name}-airflow.{domain}",
-                    "login": "admin / admin",
+                "specs": "CPU 0.5, RAM 1Gi",
+                "service": _svc_block(
+                    host=f"{stack_name}-airflow.{domain}",
+                    port=443,
+                    protocol="HTTPS",
+                    username=af_user,
+                    password=af_pass,
+                    url=web,
+                    example=web,
+                ),
+                "admin": {
+                    **_node_ssh_admin("Airflow Web"),
+                    "web_url": web,
+                    "web_user": af_user,
+                    "web_password": af_pass,
+                    "web_note": "UI: DAG, логи, переменные, пулы",
                 },
-                "ssh": _ssh_hints(namespace, "deploy/airflow-webserver"),
             }
         )
         nodes.append(
             {
-                "name": "airflow-scheduler",
+                "title": "Airflow · Scheduler",
                 "role": "scheduler",
                 "status": "planned",
-                "resources": dict(res),
-                "connect": {
-                    "note": "LocalExecutor: DAG tasks run inside scheduler",
-                    "internal": f"airflow-scheduler.{namespace}.svc",
+                "specs": specs_unit,
+                "service": _svc_block(
+                    host=host,
+                    port="—",
+                    protocol="внутренний компонент",
+                    url="scheduler (без внешнего порта)",
+                    example="Управляется через Airflow UI",
+                ),
+                "admin": {
+                    **_node_ssh_admin("Airflow Scheduler"),
+                    "web_url": web,
+                    "web_user": af_user,
+                    "web_password": af_pass,
+                    "web_note": "Планировщик; задачи LocalExecutor выполняются здесь",
                 },
-                "ssh": _ssh_hints(namespace, "deploy/airflow-scheduler"),
             }
         )
         for i in range(units):
             nodes.append(
                 {
-                    "name": f"airflow-worker-{i}",
-                    "role": f"worker-slot-{i}",
+                    "title": f"Airflow · worker {i + 1}",
+                    "role": f"worker-{i}",
                     "status": "logical",
-                    "resources": dict(res),
-                    "connect": {
-                        "note": (
-                            "Слот биллинга/ёмкости. Текущий деплой — LocalExecutor; "
-                            "отдельные worker-поды появятся при CeleryExecutor."
-                        ),
+                    "specs": specs_unit,
+                    "service": _svc_block(
+                        host=host,
+                        port="—",
+                        protocol="ёмкость / биллинг",
+                        example="Слот под параллельные задачи (LocalExecutor)",
+                    ),
+                    "admin": {
+                        **_node_ssh_admin(f"Worker slot {i + 1}"),
+                        "web_url": web,
+                        "web_user": af_user,
+                        "web_password": af_pass,
+                        "web_note": "Отдельные worker-поды появятся при CeleryExecutor",
                     },
-                    "ssh": _ssh_hints(namespace, "airflow-scheduler"),
                 }
             )
+
     elif key == "superset":
+        web = endpoints.get("superset") or f"https://{stack_name}-superset.{domain}"
         nodes.append(
             {
-                "name": "superset",
+                "title": "Superset · Web",
                 "role": "web",
                 "status": "planned",
-                "resources": dict(res),
-                "connect": {
-                    "web": endpoints.get("superset")
-                    or f"https://{stack_name}-superset.{domain}",
+                "specs": specs_unit,
+                "service": _svc_block(
+                    host=f"{stack_name}-superset.{domain}",
+                    port=443,
+                    protocol="HTTPS",
+                    url=web,
+                    example=web,
+                ),
+                "admin": {
+                    **_node_ssh_admin("Superset"),
+                    "web_url": web,
+                    "web_note": "BI-консоль: датасеты, чарты, дашборды",
                 },
-                "ssh": _ssh_hints(namespace, "deploy/superset"),
             }
         )
+
     return nodes
 
 
 def enrich_nodes_with_pods(nodes: list[dict], pods: list[dict]) -> list[dict]:
-    """Merge live pod phase/IP into planned nodes when names overlap."""
     by_name = {p.get("name"): p for p in pods}
     out = []
     for node in nodes:
         n = dict(node)
-        live = by_name.get(n["name"])
-        if not live:
-            # fuzzy: startswith
-            for pname, pdata in by_name.items():
-                if pname.startswith(n["name"]) or n["name"] in pname:
+        role = (n.get("role") or "").lower()
+        live = None
+        for pname, pdata in by_name.items():
+            pl = pname.lower()
+            if role.startswith("replica") and "clickhouse" in pl:
+                # match index if present
+                idx = role.split("-")[-1]
+                if idx.isdigit() and pl.endswith(f"-{idx}") or f"-{idx}-" in pl or pl.endswith(idx):
                     live = pdata
                     break
+                if live is None and "clickhouse" in pl:
+                    live = pdata
+            elif role.startswith("broker") and "kafka" in pl and "ui" not in pl:
+                idx = role.split("-")[-1]
+                if idx.isdigit() and (pl.endswith(f"-{idx}") or f"-{idx}." in pl):
+                    live = pdata
+                    break
+            elif role == "primary" and "postgres" in pl:
+                live = pdata
+                break
+            elif role == "webserver" and "airflow-web" in pl:
+                live = pdata
+                break
+            elif role == "scheduler" and "airflow-sched" in pl:
+                live = pdata
+                break
+            elif role == "web" and "superset" in pl:
+                live = pdata
+                break
         if live:
             n["status"] = live.get("phase", n.get("status"))
             n["pod_ip"] = live.get("pod_ip")
-            n["name"] = live.get("name", n["name"])
-            if live.get("name"):
-                n["ssh"] = _ssh_hints(live.get("namespace", ""), live["name"])
+            n["pod_name"] = live.get("name")
         out.append(n)
-    # append unknown running pods related to service prefix
     return out
 
 
@@ -249,6 +386,8 @@ def build_services_inventory(
     prices: dict | None,
     live_pods: list[dict] | None = None,
 ) -> list[dict]:
+    endpoints = dict(endpoints or {})
+    endpoints["credentials"] = load_stack_credentials(namespace, endpoints)
     services = []
     for key, cfg in (spec or {}).items():
         if not isinstance(cfg, dict) or not cfg.get("enabled"):
@@ -260,12 +399,10 @@ def build_services_inventory(
             key, cfg, stack_name=stack_name, namespace=namespace, endpoints=endpoints
         )
         if live_pods:
-            # filter live pods roughly by service
             related = [
                 p
                 for p in live_pods
                 if key in (p.get("name") or "")
-                or key.replace("postgres", "postgres") in (p.get("name") or "")
                 or (key == "clickhouse" and "clickhouse" in (p.get("name") or ""))
                 or (key == "kafka" and "kafka" in (p.get("name") or ""))
                 or (key == "airflow" and "airflow" in (p.get("name") or ""))
@@ -274,7 +411,6 @@ def build_services_inventory(
             ]
             nodes = enrich_nodes_with_pods(nodes, related)
 
-        cost = _cost_for_service(key, cfg, prices or {})
         services.append(
             {
                 "key": key,
@@ -282,8 +418,7 @@ def build_services_inventory(
                 "units": units,
                 "specs": _specs_text(key, cfg, units),
                 "resources": cfg.get("resources") or {},
-                "cost": cost,
-                "endpoint": (endpoints or {}).get(key),
+                "cost": _cost_for_service(key, cfg, prices or {}),
                 "nodes": nodes,
             }
         )
@@ -291,7 +426,6 @@ def build_services_inventory(
 
 
 def list_namespace_pods(namespace: str) -> list[dict]:
-    """Best-effort live pod list; empty if kube unreachable."""
     try:
         from app.services.provisioner import _get_k8s_clients
 
@@ -309,3 +443,44 @@ def list_namespace_pods(namespace: str) -> list[dict]:
         ]
     except Exception:
         return []
+
+
+def load_stack_credentials(namespace: str, endpoints: dict | None) -> dict:
+    """Prefer endpoints.credentials; fall back to K8s secrets for older stacks."""
+    creds = dict((endpoints or {}).get("credentials") or {})
+    if creds.get("postgres_password") and creds.get("clickhouse_password"):
+        return creds
+    try:
+        from app.services.provisioner import _get_k8s_clients
+
+        core, *_ = _get_k8s_clients()
+        if not creds.get("postgres_password"):
+            try:
+                sec = core.read_namespaced_secret("postgres-credentials", namespace)
+                data = sec.data or {}
+                import base64
+
+                if "password" in data:
+                    creds["postgres_user"] = creds.get("postgres_user") or "dwh"
+                    creds["postgres_password"] = base64.b64decode(data["password"]).decode()
+            except Exception:
+                pass
+        if not creds.get("clickhouse_password"):
+            try:
+                sec = core.read_namespaced_secret("clickhouse-credentials", namespace)
+                data = sec.data or {}
+                import base64
+
+                if "password" in data:
+                    creds["clickhouse_user"] = creds.get("clickhouse_user") or "dwh"
+                    creds["clickhouse_password"] = base64.b64decode(data["password"]).decode()
+            except Exception:
+                pass
+    except Exception:
+        pass
+    creds.setdefault("airflow_user", "admin")
+    creds.setdefault("airflow_password", "admin")
+    creds.setdefault("ssh_host", settings.server_ip)
+    creds.setdefault("ssh_user", "user")
+    creds.setdefault("ssh_command", f"ssh user@{settings.server_ip}")
+    return creds

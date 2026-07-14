@@ -91,6 +91,10 @@
     .svc-table { width: 100%; border-collapse: collapse; font-size: .84rem; margin-top: .5rem; }
     .svc-table th { text-align: left; color: var(--muted); font-weight: 500; padding: .45rem .4rem; border-bottom: 1px solid var(--line); }
     .svc-table td { padding: .5rem .4rem; border-bottom: 1px solid #eef2f4; vertical-align: top; word-break: break-all; }
+    .conn-table .k { color: var(--muted); display: inline-block; min-width: 5.2rem; }
+    .conn-cell { font-size: 0.8rem; }
+    .conn-cell code { font-size: 0.75rem; background: var(--bg); padding: 0.1rem 0.35rem; border-radius: 4px; }
+    .conn-cell div { margin-bottom: 0.22rem; }
     .stack-actions { display: flex; flex-wrap: wrap; gap: .45rem; margin-top: 1rem; }
     .wizard-layout { display: grid; grid-template-columns: minmax(0,1fr) 340px; gap: 1.25rem; align-items: start; }
     @media (max-width: 980px) { .wizard-layout { grid-template-columns: 1fr; } .summary-panel { position: static !important; } }
@@ -456,21 +460,36 @@
         const cost = svc.cost || {};
         const nodes = svc.nodes || [];
         const nodeRows = nodes.map(n => {
-          const connect = n.connect || {};
-          const connectHtml = Object.entries(connect).map(([k, v]) =>
-            `<div><span style="color:var(--muted)">${escapeHtml(k)}:</span> ${
-              String(v).startsWith('http') ? `<a href="${escapeHtml(v)}" target="_blank" rel="noopener">${escapeHtml(v)}</a>` : escapeHtml(String(v))
-            }</div>`
-          ).join('');
-          const ssh = n.ssh || {};
+          const s = n.service || {};
+          const a = n.admin || {};
+          const svcLines = [
+            s.protocol ? `<div><span class="k">Протокол</span> ${escapeHtml(s.protocol)}</div>` : '',
+            s.host ? `<div><span class="k">Хост</span> <code>${escapeHtml(s.host)}</code></div>` : '',
+            s.port ? `<div><span class="k">Порт</span> <code>${escapeHtml(s.port)}</code></div>` : '',
+            s.username ? `<div><span class="k">Логин</span> <code>${escapeHtml(s.username)}</code></div>` : '',
+            s.password ? `<div><span class="k">Пароль</span> <code>${escapeHtml(s.password)}</code></div>` : '',
+            s.database ? `<div><span class="k">БД</span> <code>${escapeHtml(s.database)}</code></div>` : '',
+            s.url ? `<div><span class="k">URL</span> ${
+              String(s.url).startsWith('http') ? `<a href="${escapeHtml(s.url)}" target="_blank" rel="noopener">${escapeHtml(s.url)}</a>` : `<code>${escapeHtml(s.url)}</code>`
+            }</div>` : '',
+            s.example ? `<div><span class="k">Пример</span> <code>${escapeHtml(s.example)}</code></div>` : '',
+          ].filter(Boolean).join('');
+          const adminLines = [
+            a.web_url ? `<div><span class="k">Консоль</span> <a href="${escapeHtml(a.web_url)}" target="_blank" rel="noopener">${escapeHtml(a.web_url)}</a></div>` : '',
+            a.web_user ? `<div><span class="k">Логин</span> <code>${escapeHtml(a.web_user)}</code></div>` : '',
+            a.web_password ? `<div><span class="k">Пароль</span> <code>${escapeHtml(a.web_password)}</code></div>` : '',
+            a.ssh_command ? `<div><span class="k">SSH на хост</span> <code>${escapeHtml(a.ssh_command)}</code></div>` : '',
+            a.web_note ? `<div class="stack-ns">${escapeHtml(a.web_note)}</div>` : '',
+            a.hint ? `<div class="stack-ns">${escapeHtml(a.hint)}</div>` : '',
+          ].filter(Boolean).join('');
           return `<tr>
-            <td><strong>${escapeHtml(n.name)}</strong><div class="stack-ns">${escapeHtml(n.role || '')} · ${escapeHtml(n.status || '')}${n.pod_ip ? ' · ' + escapeHtml(n.pod_ip) : ''}</div></td>
-            <td style="font-size:.78rem">${connectHtml || '—'}</td>
-            <td style="font-size:.75rem;color:var(--muted)">
-              ${ssh.node ? `<div>Node: <code>${escapeHtml(ssh.node)}</code></div>` : ''}
-              ${ssh.pod ? `<div>Pod: <code>${escapeHtml(ssh.pod)}</code></div>` : ''}
-              ${ssh.note ? `<div>${escapeHtml(ssh.note)}</div>` : ''}
+            <td>
+              <strong>${escapeHtml(n.title || n.name || n.role || 'node')}</strong>
+              <div class="stack-ns">${escapeHtml(n.role || '')}${n.status ? ' · ' + escapeHtml(n.status) : ''}${n.pod_ip ? ' · ' + escapeHtml(n.pod_ip) : ''}</div>
+              <div class="stack-ns" style="margin-top:.35rem">${escapeHtml(n.specs || '')}</div>
             </td>
+            <td class="conn-cell">${svcLines || '—'}</td>
+            <td class="conn-cell">${adminLines || '—'}</td>
           </tr>`;
         }).join('');
         return `<div style="margin-top:1rem;padding-top:.75rem;border-top:1px solid var(--line)">
@@ -480,14 +499,18 @@
               <div class="stack-ns">${escapeHtml(svc.specs || '')}</div>
             </div>
             <div style="text-align:right">
-              <div class="stack-ns">характеристики</div>
-              <div style="font-size:.84rem">${escapeHtml(svc.specs || '—')}</div>
-              <div class="stack-ns" style="margin-top:.25rem">стоимость / мес</div>
+              <div class="stack-ns">стоимость / мес</div>
               <strong>${money(cost.monthly)}</strong>
             </div>
           </div>
-          <table class="svc-table">
-            <thead><tr><th>Нода</th><th>Подключение</th><th>SSH / доступ</th></tr></thead>
+          <table class="svc-table conn-table">
+            <thead>
+              <tr>
+                <th>Нода / характеристики</th>
+                <th>Подключение к сервису</th>
+                <th>Администрирование</th>
+              </tr>
+            </thead>
             <tbody>${nodeRows || '<tr><td colspan="3">Нет нод</td></tr>'}</tbody>
           </table>
         </div>`;

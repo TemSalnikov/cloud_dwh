@@ -111,6 +111,17 @@ class StackProvisioner:
             await asyncio.to_thread(self._deploy_superset)
             endpoints["superset"] = f"https://{self.name}-superset.{self.base_domain}"
 
+        endpoints["credentials"] = {
+            "postgres_user": "dwh",
+            "postgres_password": self.pg_password,
+            "clickhouse_user": "dwh",
+            "clickhouse_password": self.ch_password,
+            "airflow_user": "admin",
+            "airflow_password": "admin",
+            "ssh_host": self.server_ip,
+            "ssh_user": "user",
+            "ssh_command": f"ssh user@{self.server_ip}",
+        }
         return endpoints
 
     async def delete(self):
