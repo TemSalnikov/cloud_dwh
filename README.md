@@ -16,7 +16,22 @@ Self-service платформа для развёртывания DWH-стека
 
 **Полная инструкция:** [docs/server-192.168.31.195.md](docs/server-192.168.31.195.md)
 
-### ЛОКАЛЬНАЯ машина (с VPN) — скачать и передать
+### Обновление platform-api / UI после правок кода (node1)
+
+```bash
+# с локальной машины (синхронизация кода)
+bash scripts/sync-to-node1.sh
+
+# на node1 — сборка + загрузка в containerd + rollout
+ssh user@192.168.31.195
+cd /home/user/dev/cloud_dwh
+sudo bash scripts/update-platform.sh
+```
+
+Скрипт сам: `docker build` → `ctr import` → `helm upgrade` → `rollout restart`.
+Registry `:5000` опционален (TLS-проблемы обходятся через containerd import).
+
+### ЛОКАЛЬНАЯ машина (с VPN) — offline bootstrap
 
 ```bash
 cd ~/dev/cloud_dwh

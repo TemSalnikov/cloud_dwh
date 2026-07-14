@@ -10,7 +10,7 @@ from app.models.stack import Stack, StackStatus
 from app.models.user import PricingSettings, User
 from app.routers.stacks import _delete_namespace, _load_prices, _run_lifecycle, _to_response
 from app.schemas.auth import UserResponse
-from app.schemas.stack import BlockRequest, PricingUpdate, StackResponse
+from app.schemas.stack import BlockRequest, ForceStatusRequest, PricingUpdate, StackResponse
 from app.services.pricing import DEFAULT_PRICES
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -113,6 +113,52 @@ async def _block_after_stop(stack_id, reason: str):
         stack.blocked_reason = reason
         stack.status_message = reason
         await db.commit()
+
+
+@router.post("/stacks/{stack_id}/force-status", response_model=StackResponse)
+async def admin_force_status(
+    stack_id: str,
+    body: ForceStatusRequest,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_superuser),
+):
+    """Unstick stacks stuck in updating/deploying/pending."""
+    result = await db.execute(select(Stack).where(Stack.id == stack_id))
+    stack = result.scalar_one_or_none()
+    if not stack:
+        raise HTTPException(404, "Stack not found")
+    try:
+        new_status = StackStatus(body.status)
+    except ValueError as exc:
+        raise HTTPException(400, f"Invalid status: {body.status}") from exc
+
+    stack.status = new_status
+    stack.status_message = body.message or f"Status forced to {body.status} by admin"
+    if new_status != StackStatus.blocked:
+        stack.blocked_reason = None
+    await db.commit()
+    await db.refresh(stack)
+    prices = await _load_prices(db)
+    return _to_response(stack, prices)
+
+
+@router.post("/stacks/{stack_id}/redeploy", response_model=StackResponse)
+async def admin_redeploy_stack(
+    stack_id: str,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_superuser),
+):
+    result = await db.execute(select(Stack).where(Stack.id == stack_id))
+    stack = result.scalar_one_or_none()
+    if not stack:
+        raise HTTPException(404, "Stack not found")
+    stack.status = StackStatus.updating
+    stack.status_message = "Admin redeploy"
+    await db.commit()
+    background_tasks.add_task(_run_lifecycle, stack.id, "redeploy")
+    prices = await _load_prices(db)
+    return _to_response(stack, prices)
 
 
 @router.post("/stacks/{stack_id}/unblock", response_model=StackResponse)

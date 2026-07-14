@@ -18,6 +18,7 @@ from app.schemas.stack import (
     StackResponse,
     StackUpdate,
 )
+from app.services.inventory import build_services_inventory, list_namespace_pods
 from app.services.pricing import DEFAULT_PRICES, estimate_cost
 from app.services.provisioner import StackProvisioner, _get_k8s_clients
 
@@ -78,8 +79,23 @@ def _build_spec(body: StackCreate | StackUpdate | EstimateRequest) -> dict:
     raise HTTPException(400, "Provide either preset or services config")
 
 
-def _to_response(stack: Stack, prices: dict, owner_email: str | None = None) -> StackResponse:
+def _to_response(
+    stack: Stack,
+    prices: dict,
+    owner_email: str | None = None,
+    *,
+    with_live_pods: bool = False,
+) -> StackResponse:
     cost = estimate_cost(stack.spec, prices, stack.status.value)
+    live = list_namespace_pods(stack.namespace) if with_live_pods else None
+    services = build_services_inventory(
+        stack.spec,
+        stack_name=stack.name,
+        namespace=stack.namespace,
+        endpoints=stack.endpoints,
+        prices=prices,
+        live_pods=live,
+    )
     return StackResponse(
         id=str(stack.id),
         name=stack.name,
@@ -91,6 +107,7 @@ def _to_response(stack: Stack, prices: dict, owner_email: str | None = None) -> 
         owner_email=owner_email,
         spec=stack.spec,
         endpoints=stack.endpoints,
+        services=services,
         cost=CostEstimate(**cost),
         created_at=stack.created_at.isoformat() if stack.created_at else "",
         updated_at=stack.updated_at.isoformat() if stack.updated_at else None,
@@ -220,14 +237,27 @@ async def list_stacks(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    result = await db.execute(
-        select(Stack)
-        .where((Stack.owner_id == user.id) | (Stack.owner_id.is_(None)))
-        .order_by(Stack.created_at.desc())
-    )
+    if user.is_superuser:
+        result = await db.execute(select(Stack).order_by(Stack.created_at.desc()))
+    else:
+        result = await db.execute(
+            select(Stack)
+            .where((Stack.owner_id == user.id) | (Stack.owner_id.is_(None)))
+            .order_by(Stack.created_at.desc())
+        )
     stacks = await _reconcile_orphan_stacks(list(result.scalars().all()), db)
     prices = await _load_prices(db)
-    return [_to_response(s, prices, user.email if s.owner_id == user.id else None) for s in stacks]
+
+    emails: dict = {}
+    owner_ids = {s.owner_id for s in stacks if s.owner_id}
+    if owner_ids:
+        users = await db.execute(select(User).where(User.id.in_(owner_ids)))
+        emails = {u.id: u.email for u in users.scalars().all()}
+
+    return [
+        _to_response(s, prices, emails.get(s.owner_id) if s.owner_id else None, with_live_pods=True)
+        for s in stacks
+    ]
 
 
 @router.get("/stacks/{stack_id}", response_model=StackResponse)
@@ -238,7 +268,7 @@ async def get_stack(
 ):
     stack = await _get_owned_stack(stack_id, user, db)
     prices = await _load_prices(db)
-    return _to_response(stack, prices)
+    return _to_response(stack, prices, with_live_pods=True)
 
 
 @router.patch("/stacks/{stack_id}", response_model=StackResponse)

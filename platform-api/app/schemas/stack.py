@@ -82,6 +82,7 @@ class StackResponse(BaseModel):
     owner_email: str | None = None
     spec: dict
     endpoints: dict | None
+    services: list[dict] | None = None
     cost: CostEstimate | None = None
     created_at: str
     updated_at: str | None = None
@@ -109,3 +110,8 @@ class PricingUpdate(BaseModel):
 
 class BlockRequest(BaseModel):
     reason: str = Field(default="Blocked by administrator", max_length=500)
+
+
+class ForceStatusRequest(BaseModel):
+    status: str = Field(pattern=r"^(running|stopped|failed|blocked)$")
+    message: str | None = Field(default=None, max_length=500)
