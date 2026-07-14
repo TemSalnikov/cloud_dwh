@@ -79,6 +79,18 @@ if ! command -v docker &>/dev/null; then
   fi
 fi
 
+# Docker должен пушить в HTTP registry без TLS
+REGISTRY="${REGISTRY:-${SERVER_IP}:5000}"
+mkdir -p /etc/docker
+if [[ ! -f /etc/docker/daemon.json ]] || ! grep -q "$REGISTRY" /etc/docker/daemon.json 2>/dev/null; then
+  cat > /etc/docker/daemon.json <<EOF
+{
+  "insecure-registries": ["${REGISTRY}"]
+}
+EOF
+  systemctl restart docker
+fi
+
 # Локальный registry (образы без внешнего registry)
 if ! docker ps --format '{{.Names}}' | grep -q '^registry$'; then
   log "Starting local Docker registry on :5000"
