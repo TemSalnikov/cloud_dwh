@@ -16,7 +16,7 @@ class ClickHouseConfig(BaseModel):
 class KafkaConfig(BaseModel):
     enabled: bool = False
     brokers: int = Field(default=1, ge=1, le=3)
-    ui: bool = True  # Kafka UI (provectuslabs) — включается вместе с Kafka
+    ui: bool = True
     resources: ServiceResources = ServiceResources(cpu="2", memory="4Gi", storage="20Gi")
 
 
@@ -56,15 +56,56 @@ class StackCreate(BaseModel):
     services: StackSpec | None = None
 
 
+class StackUpdate(BaseModel):
+    preset: str | None = Field(default=None, pattern=r"^(minimal|standard|full)$")
+    services: StackSpec | None = None
+
+
+class CostEstimate(BaseModel):
+    currency: str
+    status: str
+    resources: dict
+    lines: dict
+    monthly: float
+    hourly: float
+    unit_prices: dict
+
+
 class StackResponse(BaseModel):
     id: str
     name: str
     namespace: str
     status: str
     status_message: str | None
+    blocked_reason: str | None = None
+    owner_id: str | None = None
+    owner_email: str | None = None
     spec: dict
     endpoints: dict | None
+    cost: CostEstimate | None = None
     created_at: str
+    updated_at: str | None = None
 
     class Config:
         from_attributes = True
+
+
+class EstimateRequest(BaseModel):
+    preset: str | None = None
+    services: StackSpec | None = None
+    status: str = "running"
+
+
+class PricingUpdate(BaseModel):
+    vcpu_month: float = Field(gt=0)
+    ram_gb_month: float = Field(gt=0)
+    storage_gb_month: float = Field(gt=0)
+    service_month: float = Field(ge=0)
+    stopped_compute_factor: float = Field(ge=0, le=1, default=0.0)
+    stopped_storage_factor: float = Field(ge=0, le=1, default=1.0)
+    blocked_compute_factor: float = Field(ge=0, le=1, default=0.0)
+    blocked_storage_factor: float = Field(ge=0, le=1, default=1.0)
+
+
+class BlockRequest(BaseModel):
+    reason: str = Field(default="Blocked by administrator", max_length=500)

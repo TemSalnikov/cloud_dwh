@@ -3,6 +3,8 @@
 import logging
 import secrets
 import string
+import time
+from urllib.parse import quote
 
 from kubernetes import client, config
 from kubernetes.client.rest import ApiException
@@ -40,30 +42,63 @@ class StackProvisioner:
         self.namespace = f"stack-{stack_id[:8]}"
         self.spec = spec
         self.base_domain = settings.ingress_base_domain
+        self.server_ip = settings.server_ip
         self.pg_password = _generate_password()
+        self.ch_password = _generate_password()
         self.core, self.apps, self.rbac, self.net, self.custom = _get_k8s_clients()
+
+    def _apply_external_service(self, name: str, selector: dict, ports: list[dict]):
+        """Expose service on node IP (externalIPs) for clients outside the cluster."""
+        svc = client.V1Service(
+            metadata=client.V1ObjectMeta(name=name, namespace=self.namespace),
+            spec=client.V1ServiceSpec(
+                type="ClusterIP",
+                external_i_ps=[self.server_ip],
+                selector=selector,
+                ports=[
+                    client.V1ServicePort(
+                        name=p["name"],
+                        port=p["port"],
+                        target_port=p.get("target_port", p["port"]),
+                    )
+                    for p in ports
+                ],
+            ),
+        )
+        try:
+            self.core.create_namespaced_service(self.namespace, svc)
+        except ApiException as e:
+            if e.status != 409:
+                raise
 
     async def deploy(self) -> dict:
         import asyncio
 
         await asyncio.to_thread(self._create_namespace)
+        await asyncio.to_thread(self._create_limit_range)
         await asyncio.to_thread(self._create_resource_quota)
         endpoints = {}
 
         if self._enabled("postgres") or self._enabled("airflow") or self._enabled("superset"):
             await asyncio.to_thread(self._deploy_postgres)
-            endpoints["postgres"] = f"postgres-rw.{self.namespace}.svc.cluster.local:5432"
+            # External: host IP:5432 (not cluster-local DNS)
+            endpoints["postgres"] = f"{self.server_ip}:5432"
+            if self._enabled("airflow") or self._enabled("superset"):
+                await asyncio.to_thread(self._wait_postgres_ready)
 
         if self._enabled("airflow") or self._enabled("superset"):
             await asyncio.to_thread(self._deploy_redis)
 
         if self._enabled("clickhouse"):
             await asyncio.to_thread(self._deploy_clickhouse)
-            endpoints["clickhouse"] = f"https://{self.name}-ch.{self.base_domain}"
+            # Client HTTP API (8123) + optional HTTPS web via ingress
+            endpoints["clickhouse"] = f"{self.server_ip}:8123"
+            endpoints["clickhouse_web"] = f"https://{self.name}-ch.{self.base_domain}"
 
         if self._enabled("kafka"):
             await asyncio.to_thread(self._deploy_kafka)
-            endpoints["kafka"] = f"kafka-kafka-bootstrap.{self.namespace}.svc.cluster.local:9092"
+            # External bootstrap NodePort (advertised to clients outside the cluster)
+            endpoints["kafka"] = f"{self.server_ip}:30993"
             if self.spec.get("kafka", {}).get("ui", True):
                 await asyncio.to_thread(self._deploy_kafka_ui)
                 endpoints["kafka_ui"] = f"https://{self.name}-kafka-ui.{self.base_domain}"
@@ -103,6 +138,27 @@ class StackProvisioner:
             if e.status != 409:
                 raise
 
+    def _create_limit_range(self):
+        """Default container limits so operator-managed pods pass ResourceQuota."""
+        lr = client.V1LimitRange(
+            metadata=client.V1ObjectMeta(name="stack-limits", namespace=self.namespace),
+            spec=client.V1LimitRangeSpec(
+                limits=[
+                    client.V1LimitRangeItem(
+                        type="Container",
+                        default={"cpu": "4", "memory": "8Gi"},
+                        default_request={"cpu": "100m", "memory": "256Mi"},
+                        max={"cpu": "32", "memory": "64Gi"},
+                    )
+                ]
+            ),
+        )
+        try:
+            self.core.create_namespaced_limit_range(self.namespace, lr)
+        except ApiException as e:
+            if e.status != 409:
+                raise
+
     def _create_resource_quota(self):
         # Generous buffer: redis, kafka-ui, init jobs, operators sidecars
         total_cpu = 4.0
@@ -128,10 +184,8 @@ class StackProvisioner:
             metadata=client.V1ObjectMeta(name="stack-quota", namespace=self.namespace),
             spec=client.V1ResourceQuotaSpec(
                 hard={
-                    "requests.cpu": str(int(total_cpu) + 4),
-                    "requests.memory": f"{total_gi + 8}Gi",
-                    "limits.cpu": str(int(total_cpu) + 8),
-                    "limits.memory": f"{total_gi + 16}Gi",
+                    "requests.cpu": str(int(total_cpu) + 6),
+                    "requests.memory": f"{total_gi + 12}Gi",
                     "persistentvolumeclaims": "30",
                     "pods": "50",
                 }
@@ -195,12 +249,37 @@ class StackProvisioner:
                 if e.status != 409:
                     raise
 
+    def _wait_postgres_ready(self, timeout_sec: int = 300):
+        deadline = time.time() + timeout_sec
+        while time.time() < deadline:
+            pods = self.core.list_namespaced_pod(
+                self.namespace, label_selector="cnpg.io/cluster=postgres"
+            )
+            for pod in pods.items:
+                if pod.status.phase != "Running":
+                    continue
+                for cs in pod.status.container_statuses or []:
+                    if cs.ready:
+                        return
+            time.sleep(5)
+        raise TimeoutError(f"Postgres not ready in {self.namespace} after {timeout_sec}s")
+
     def _deploy_postgres(self):
         cfg = self.spec.get("postgres", {})
         res = cfg.get("resources", {})
+        pg_host = f"postgres-rw.{self.namespace}.svc"
         secret = client.V1Secret(
             metadata=client.V1ObjectMeta(name="postgres-credentials", namespace=self.namespace),
-            string_data={"username": "dwh", "password": self.pg_password},
+            string_data={
+                "username": "dwh",
+                "password": self.pg_password,
+                "airflow-db-url": (
+                    f"postgresql+psycopg2://dwh:{self.pg_password}@{pg_host}:5432/airflow"
+                ),
+                "superset-db-url": (
+                    f"postgresql+psycopg2://dwh:{self.pg_password}@{pg_host}:5432/superset"
+                ),
+            },
         )
         try:
             self.core.create_namespaced_secret(self.namespace, secret)
@@ -220,7 +299,11 @@ class StackProvisioner:
                     "requests": {
                         "cpu": str(res.get("cpu", "1")),
                         "memory": res.get("memory", "2Gi"),
-                    }
+                    },
+                    "limits": {
+                        "cpu": str(res.get("cpu", "1")),
+                        "memory": res.get("memory", "2Gi"),
+                    },
                 },
                 "bootstrap": {
                     "initdb": {
@@ -243,7 +326,12 @@ class StackProvisioner:
             if e.status != 409:
                 raise
 
-    def _deploy_redis(self):
+        # External access: 192.168.x.x:5432 → postgres pods
+        self._apply_external_service(
+            "postgres-external",
+            {"cnpg.io/cluster": "postgres", "role": "primary"},
+            [{"name": "postgresql", "port": 5432, "target_port": 5432}],
+        )
         labels = {"app": "redis"}
         dep = client.V1Deployment(
             metadata=client.V1ObjectMeta(name="redis", namespace=self.namespace),
@@ -280,6 +368,25 @@ class StackProvisioner:
         cfg = self.spec.get("clickhouse", {})
         res = cfg.get("resources", {})
         replicas = cfg.get("replicas", 1)
+
+        ch_secret = client.V1Secret(
+            metadata=client.V1ObjectMeta(name="clickhouse-credentials", namespace=self.namespace),
+            string_data={
+                "username": "dwh",
+                "password": self.ch_password,
+                # HTTP interface — used by clickhouse-connect / Superset
+                "sqlalchemy-uri": (
+                    f"clickhousedb://dwh:{quote(self.ch_password, safe='')}"
+                    f"@clickhouse-clickhouse.{self.namespace}.svc:8123/default"
+                ),
+            },
+        )
+        try:
+            self.core.create_namespaced_secret(self.namespace, ch_secret)
+        except ApiException as e:
+            if e.status != 409:
+                raise
+
         chi = {
             "apiVersion": "clickhouse.altinity.com/v1",
             "kind": "ClickHouseInstallation",
@@ -300,7 +407,7 @@ class StackProvisioner:
                         }
                     ],
                     "users": {
-                        "dwh/password": _generate_password(),
+                        "dwh/password": self.ch_password,
                         "dwh/networks/ip": ["0.0.0.0/0"],
                         "dwh/profile": "default",
                     },
@@ -346,7 +453,7 @@ class StackProvisioner:
                             "spec": {
                                 "ports": [
                                     {"name": "http", "port": 8123},
-                                    {"name": "tcp", "port": 9000},
+                                    {"name": "native", "port": 9000},
                                 ],
                                 "type": "ClusterIP",
                             },
@@ -363,7 +470,7 @@ class StackProvisioner:
             if e.status != 409:
                 raise
 
-        # Ingress → ClickHouse HTTP (8123) via CHI service clickhouse-clickhouse
+        # Ingress → ClickHouse HTTP (browser / HTTPS)
         host = f"{self.name}-ch.{self.base_domain}"
         svc = client.V1Service(
             metadata=client.V1ObjectMeta(name="clickhouse-http", namespace=self.namespace),
@@ -374,6 +481,16 @@ class StackProvisioner:
         )
         ing = self._ingress("clickhouse", "clickhouse-http", 8123, host, "clickhouse-tls")
         self._apply_dep_svc_ing(svc=svc, ing=ing)
+
+        # External clients: IP:8123 (HTTP) and IP:9000 (native)
+        self._apply_external_service(
+            "clickhouse-external",
+            {"clickhouse.altinity.com/chi": "clickhouse"},
+            [
+                {"name": "http", "port": 8123, "target_port": 8123},
+                {"name": "native", "port": 9000, "target_port": 9000},
+            ],
+        )
 
     def _deploy_kafka(self):
         """Strimzi 0.48+: KRaft + KafkaNodePool, Kafka 4.0."""
@@ -427,6 +544,23 @@ class StackProvisioner:
                     "listeners": [
                         {"name": "plain", "port": 9092, "type": "internal", "tls": False},
                         {"name": "tls", "port": 9093, "type": "internal", "tls": True},
+                        {
+                            "name": "external",
+                            "port": 9094,
+                            "type": "nodeport",
+                            "tls": False,
+                            "configuration": {
+                                "bootstrap": {"nodePort": 30993},
+                                "brokers": [
+                                    {
+                                        "broker": i,
+                                        "advertisedHost": self.server_ip,
+                                        "nodePort": 30994 + i,
+                                    }
+                                    for i in range(brokers)
+                                ],
+                            },
+                        },
                     ],
                     "config": {
                         "offsets.topic.replication.factor": min(brokers, 3),
@@ -477,14 +611,16 @@ class StackProvisioner:
                                     ),
                                     client.V1EnvVar(name="DYNAMIC_CONFIG_ENABLED", value="true"),
                                 ],
-                                readinessProbe=client.V1Probe(
+                                readiness_probe=client.V1Probe(
                                     http_get=client.V1HTTPGetAction(path="/", port=8080),
-                                    initial_delay_seconds=20,
-                                    period_seconds=10,
+                                    initial_delay_seconds=45,
+                                    period_seconds=15,
+                                    timeout_seconds=5,
+                                    failure_threshold=10,
                                 ),
                                 resources=client.V1ResourceRequirements(
-                                    requests={"cpu": "100m", "memory": "256Mi"},
-                                    limits={"cpu": "500m", "memory": "512Mi"},
+                                    requests={"cpu": "200m", "memory": "512Mi"},
+                                    limits={"cpu": "1", "memory": "1Gi"},
                                 ),
                             )
                         ]
@@ -502,60 +638,99 @@ class StackProvisioner:
         ing = self._ingress("kafka-ui", "kafka-ui", 8080, host, "kafka-ui-tls")
         self._apply_dep_svc_ing(dep=dep, svc=svc, ing=ing)
 
+    def _airflow_env(self) -> list:
+        return [
+            client.V1EnvVar(
+                name="AIRFLOW__DATABASE__SQL_ALCHEMY_CONN",
+                value_from=client.V1EnvVarSource(
+                    secret_key_ref=client.V1SecretKeySelector(
+                        name="postgres-credentials",
+                        key="airflow-db-url",
+                    )
+                ),
+            ),
+            client.V1EnvVar(name="AIRFLOW__CORE__EXECUTOR", value="LocalExecutor"),
+            client.V1EnvVar(name="AIRFLOW__CORE__LOAD_EXAMPLES", value="false"),
+            client.V1EnvVar(name="AIRFLOW__WEBSERVER__EXPOSE_CONFIG", value="true"),
+        ]
+
     def _deploy_airflow(self):
         cfg = self.spec.get("airflow", {})
         res = cfg.get("resources", {})
-        labels = {"app": "airflow-webserver"}
-        db_url = (
-            f"postgresql+psycopg2://dwh:{self.pg_password}"
-            f"@postgres-rw.{self.namespace}.svc:5432/airflow"
-        )
-        # Init DB then start webserver (LocalExecutor — no celery workers needed for MVP)
-        start_cmd = (
+        # LocalExecutor: webserver + scheduler. Tasks run in the scheduler process
+        # (no Celery workers). workers in preset is reserved for future CeleryExecutor.
+        cpu_req = str(res.get("cpu", "1"))
+        mem_req = res.get("memory", "2Gi")
+        # Split budget roughly: webserver lighter, scheduler does the work
+        ws_cpu, sch_cpu = "500m", cpu_req
+        ws_mem = "1Gi" if str(mem_req).endswith("Gi") else mem_req
+        sch_mem = mem_req
+
+        ws_labels = {"app": "airflow-webserver"}
+        ws_cmd = (
             "airflow db migrate && "
             "airflow users create --username admin --password admin "
             "--firstname Admin --lastname User --role Admin --email admin@example.com || true; "
             "exec airflow webserver"
         )
-        dep = client.V1Deployment(
+        ws_dep = client.V1Deployment(
             metadata=client.V1ObjectMeta(name="airflow-webserver", namespace=self.namespace),
             spec=client.V1DeploymentSpec(
                 replicas=1,
-                selector=client.V1LabelSelector(match_labels=labels),
+                selector=client.V1LabelSelector(match_labels=ws_labels),
                 template=client.V1PodTemplateSpec(
-                    metadata=client.V1ObjectMeta(labels=labels),
+                    metadata=client.V1ObjectMeta(labels=ws_labels),
                     spec=client.V1PodSpec(
                         containers=[
                             client.V1Container(
                                 name="webserver",
                                 image="apache/airflow:2.7.3-python3.10",
-                                command=["bash", "-c", start_cmd],
+                                command=["bash", "-c", ws_cmd],
                                 ports=[client.V1ContainerPort(container_port=8080)],
-                                env=[
-                                    client.V1EnvVar(
-                                        name="AIRFLOW__DATABASE__SQL_ALCHEMY_CONN", value=db_url
-                                    ),
-                                    client.V1EnvVar(
-                                        name="AIRFLOW__CORE__EXECUTOR", value="LocalExecutor"
-                                    ),
-                                    client.V1EnvVar(
-                                        name="AIRFLOW__CORE__LOAD_EXAMPLES", value="false"
-                                    ),
-                                    client.V1EnvVar(
-                                        name="AIRFLOW__WEBSERVER__EXPOSE_CONFIG", value="true"
-                                    ),
-                                ],
-                                readinessProbe=client.V1Probe(
+                                env=self._airflow_env(),
+                                readiness_probe=client.V1Probe(
                                     http_get=client.V1HTTPGetAction(path="/health", port=8080),
                                     initial_delay_seconds=60,
                                     period_seconds=15,
                                     failure_threshold=20,
                                 ),
                                 resources=client.V1ResourceRequirements(
-                                    requests={
-                                        "cpu": str(res.get("cpu", "1")),
-                                        "memory": res.get("memory", "2Gi"),
-                                    },
+                                    requests={"cpu": ws_cpu, "memory": ws_mem},
+                                    limits={"cpu": "1", "memory": "2Gi"},
+                                ),
+                            )
+                        ]
+                    ),
+                ),
+            ),
+        )
+        svc = client.V1Service(
+            metadata=client.V1ObjectMeta(name="airflow-webserver", namespace=self.namespace),
+            spec=client.V1ServiceSpec(
+                selector=ws_labels, ports=[client.V1ServicePort(port=8080, target_port=8080)]
+            ),
+        )
+        host = f"{self.name}-airflow.{self.base_domain}"
+        ing = self._ingress("airflow", "airflow-webserver", 8080, host, "airflow-tls")
+        self._apply_dep_svc_ing(dep=ws_dep, svc=svc, ing=ing)
+
+        sch_labels = {"app": "airflow-scheduler"}
+        sch_dep = client.V1Deployment(
+            metadata=client.V1ObjectMeta(name="airflow-scheduler", namespace=self.namespace),
+            spec=client.V1DeploymentSpec(
+                replicas=1,
+                selector=client.V1LabelSelector(match_labels=sch_labels),
+                template=client.V1PodTemplateSpec(
+                    metadata=client.V1ObjectMeta(labels=sch_labels),
+                    spec=client.V1PodSpec(
+                        containers=[
+                            client.V1Container(
+                                name="scheduler",
+                                image="apache/airflow:2.7.3-python3.10",
+                                command=["bash", "-c", "exec airflow scheduler"],
+                                env=self._airflow_env(),
+                                resources=client.V1ResourceRequirements(
+                                    requests={"cpu": sch_cpu, "memory": sch_mem},
                                     limits={
                                         "cpu": str(res.get("cpu", "2")),
                                         "memory": res.get("memory", "4Gi"),
@@ -567,29 +742,22 @@ class StackProvisioner:
                 ),
             ),
         )
-        svc = client.V1Service(
-            metadata=client.V1ObjectMeta(name="airflow-webserver", namespace=self.namespace),
-            spec=client.V1ServiceSpec(
-                selector=labels, ports=[client.V1ServicePort(port=8080, target_port=8080)]
-            ),
-        )
-        host = f"{self.name}-airflow.{self.base_domain}"
-        ing = self._ingress("airflow", "airflow-webserver", 8080, host, "airflow-tls")
-        self._apply_dep_svc_ing(dep=dep, svc=svc, ing=ing)
+        self._apply_dep_svc_ing(dep=sch_dep)
 
     def _deploy_superset(self):
         cfg = self.spec.get("superset", {})
         res = cfg.get("resources", {})
         labels = {"app": "superset"}
-        db_url = (
-            f"postgresql+psycopg2://dwh:{self.pg_password}"
-            f"@postgres-rw.{self.namespace}.svc:5432/superset"
-        )
         config_py = (
             "import os\n"
             "SQLALCHEMY_DATABASE_URI = os.environ['DATABASE_URL']\n"
             "SECRET_KEY = os.environ['SUPERSET_SECRET_KEY']\n"
             "WTF_CSRF_ENABLED = True\n"
+            "# clickhouse-connect registers dialect clickhousedb+connect\n"
+            "try:\n"
+            "    import clickhouse_connect  # noqa: F401\n"
+            "except ImportError:\n"
+            "    pass\n"
         )
         cm = client.V1ConfigMap(
             metadata=client.V1ObjectMeta(name="superset-config", namespace=self.namespace),
@@ -601,15 +769,76 @@ class StackProvisioner:
             if e.status != 409:
                 raise
 
+        # Install drivers + optionally register ClickHouse after init
+        register_ch = ""
+        if self._enabled("clickhouse"):
+            register_ch = (
+                "if [ -n \"$CLICKHOUSE_SQLALCHEMY_URI\" ]; then "
+                "python - <<'PY'\n"
+                "import os\n"
+                "from superset.app import create_app\n"
+                "app = create_app()\n"
+                "with app.app_context():\n"
+                "    from superset import db\n"
+                "    from superset.models.core import Database\n"
+                "    uri = os.environ['CLICKHOUSE_SQLALCHEMY_URI']\n"
+                "    existing = db.session.query(Database).filter_by(database_name='ClickHouse').first()\n"
+                "    if existing:\n"
+                "        existing.sqlalchemy_uri = uri\n"
+                "        existing.expose_in_sqllab = True\n"
+                "    else:\n"
+                "        db.session.add(Database(\n"
+                "            database_name='ClickHouse', sqlalchemy_uri=uri, expose_in_sqllab=True))\n"
+                "    db.session.commit()\n"
+                "    print('ClickHouse database registered')\n"
+                "PY\n"
+                "fi && "
+            )
+
         start_cmd = (
-            "pip install -q psycopg2-binary && "
+            "pip install -q psycopg2-binary 'clickhouse-connect>=0.7.0' && "
             "superset db upgrade && "
             "superset fab create-admin --username admin --firstname Admin "
             "--lastname User --email admin@example.com --password admin || true && "
             "superset init && "
+            f"{register_ch}"
             "exec gunicorn --bind 0.0.0.0:8088 --workers 1 --timeout 120 "
             "'superset.app:create_app()'"
         )
+
+        env = [
+            client.V1EnvVar(
+                name="SUPERSET_SECRET_KEY",
+                value=_generate_password(32),
+            ),
+            client.V1EnvVar(
+                name="DATABASE_URL",
+                value_from=client.V1EnvVarSource(
+                    secret_key_ref=client.V1SecretKeySelector(
+                        name="postgres-credentials",
+                        key="superset-db-url",
+                    )
+                ),
+            ),
+            client.V1EnvVar(
+                name="SUPERSET_CONFIG_PATH",
+                value="/app/pythonpath/superset_config.py",
+            ),
+            client.V1EnvVar(name="PYTHONPATH", value="/app/pythonpath"),
+        ]
+        if self._enabled("clickhouse"):
+            env.append(
+                client.V1EnvVar(
+                    name="CLICKHOUSE_SQLALCHEMY_URI",
+                    value_from=client.V1EnvVarSource(
+                        secret_key_ref=client.V1SecretKeySelector(
+                            name="clickhouse-credentials",
+                            key="sqlalchemy-uri",
+                        )
+                    ),
+                )
+            )
+
         dep = client.V1Deployment(
             metadata=client.V1ObjectMeta(name="superset", namespace=self.namespace),
             spec=client.V1DeploymentSpec(
@@ -624,24 +853,13 @@ class StackProvisioner:
                                 image="apache/superset:4.0.2",
                                 command=["bash", "-c", start_cmd],
                                 ports=[client.V1ContainerPort(container_port=8088)],
-                                env=[
-                                    client.V1EnvVar(
-                                        name="SUPERSET_SECRET_KEY",
-                                        value=_generate_password(32),
-                                    ),
-                                    client.V1EnvVar(name="DATABASE_URL", value=db_url),
-                                    client.V1EnvVar(
-                                        name="SUPERSET_CONFIG_PATH",
-                                        value="/app/pythonpath/superset_config.py",
-                                    ),
-                                    client.V1EnvVar(name="PYTHONPATH", value="/app/pythonpath"),
-                                ],
+                                env=env,
                                 volume_mounts=[
                                     client.V1VolumeMount(
                                         name="config", mount_path="/app/pythonpath"
                                     )
                                 ],
-                                readinessProbe=client.V1Probe(
+                                readiness_probe=client.V1Probe(
                                     http_get=client.V1HTTPGetAction(path="/health", port=8088),
                                     initial_delay_seconds=120,
                                     period_seconds=20,
@@ -678,3 +896,159 @@ class StackProvisioner:
         host = f"{self.name}-superset.{self.base_domain}"
         ing = self._ingress("superset", "superset", 8088, host, "superset-tls")
         self._apply_dep_svc_ing(dep=dep, svc=svc, ing=ing)
+
+    async def stop(self):
+        import asyncio
+
+        await asyncio.to_thread(self._scale_namespace_workloads, target=0, save_prev=True)
+
+    async def start(self):
+        import asyncio
+
+        await asyncio.to_thread(self._scale_namespace_workloads, target=None, save_prev=False)
+
+    async def restart(self):
+        import asyncio
+
+        await asyncio.to_thread(self._restart_pods)
+
+    def _scale_namespace_workloads(self, target: int | None, save_prev: bool):
+        """Scale Deployments/StatefulSets. target=None restores previous replica counts."""
+        deps = self.apps.list_namespaced_deployment(self.namespace).items
+        for dep in deps:
+            name = dep.metadata.name
+            annotations = dict(dep.metadata.annotations or {})
+            if save_prev and target == 0:
+                annotations["cloud-dwh/prev-replicas"] = str(dep.spec.replicas or 1)
+                body = {"metadata": {"annotations": annotations}, "spec": {"replicas": 0}}
+            else:
+                prev = int(annotations.get("cloud-dwh/prev-replicas", "1") or "1")
+                replicas = prev if target is None else target
+                body = {"spec": {"replicas": replicas}}
+            self.apps.patch_namespaced_deployment(name, self.namespace, body)
+
+        stss = self.apps.list_namespaced_stateful_set(self.namespace).items
+        for sts in stss:
+            name = sts.metadata.name
+            annotations = dict(sts.metadata.annotations or {})
+            if save_prev and target == 0:
+                annotations["cloud-dwh/prev-replicas"] = str(sts.spec.replicas or 1)
+                body = {"metadata": {"annotations": annotations}, "spec": {"replicas": 0}}
+            else:
+                prev = int(annotations.get("cloud-dwh/prev-replicas", "1") or "1")
+                replicas = prev if target is None else target
+                body = {"spec": {"replicas": replicas}}
+            self.apps.patch_namespaced_stateful_set(name, self.namespace, body)
+
+        # CloudNativePG hibernation
+        try:
+            clusters = self.custom.list_namespaced_custom_object(
+                "postgresql.cnpg.io", "v1", self.namespace, "clusters"
+            ).get("items", [])
+            for cluster in clusters:
+                cname = cluster["metadata"]["name"]
+                annotations = dict(cluster["metadata"].get("annotations") or {})
+                if save_prev and target == 0:
+                    annotations["cnpg.io/hibernation"] = "on"
+                else:
+                    annotations.pop("cnpg.io/hibernation", None)
+                self.custom.patch_namespaced_custom_object(
+                    "postgresql.cnpg.io",
+                    "v1",
+                    self.namespace,
+                    "clusters",
+                    cname,
+                    {"metadata": {"annotations": annotations}},
+                )
+        except ApiException as e:
+            if e.status not in (404, 403):
+                logger.warning("CNPG hibernation patch failed: %s", e)
+
+        # ClickHouse replicas
+        try:
+            chis = self.custom.list_namespaced_custom_object(
+                "clickhouse.altinity.com", "v1", self.namespace, "clickhouseinstallations"
+            ).get("items", [])
+            for chi in chis:
+                cname = chi["metadata"]["name"]
+                annotations = dict(chi["metadata"].get("annotations") or {})
+                clusters = chi.get("spec", {}).get("configuration", {}).get("clusters", [])
+                if not clusters:
+                    continue
+                current = (
+                    clusters[0].get("layout", {}).get("replicasCount")
+                    or clusters[0].get("layout", {}).get("replicas")
+                    or 1
+                )
+                if save_prev and target == 0:
+                    annotations["cloud-dwh/prev-replicas"] = str(current)
+                    replicas = 0
+                else:
+                    replicas = int(annotations.get("cloud-dwh/prev-replicas", str(current)) or "1")
+                    if target is not None:
+                        replicas = target
+                patch = {
+                    "metadata": {"annotations": annotations},
+                    "spec": {
+                        "configuration": {
+                            "clusters": [{"layout": {"replicasCount": max(0, replicas)}}]
+                        }
+                    },
+                }
+                self.custom.patch_namespaced_custom_object(
+                    "clickhouse.altinity.com",
+                    "v1",
+                    self.namespace,
+                    "clickhouseinstallations",
+                    cname,
+                    patch,
+                )
+        except ApiException as e:
+            if e.status not in (404, 403):
+                logger.warning("ClickHouse scale patch failed: %s", e)
+
+        # Kafka replicas (Strimzi)
+        try:
+            kafkas = self.custom.list_namespaced_custom_object(
+                "kafka.strimzi.io", "v1beta2", self.namespace, "kafkas"
+            ).get("items", [])
+            for kafka in kafkas:
+                kname = kafka["metadata"]["name"]
+                annotations = dict(kafka["metadata"].get("annotations") or {})
+                current = kafka.get("spec", {}).get("kafka", {}).get("replicas", 1)
+                if save_prev and target == 0:
+                    annotations["cloud-dwh/prev-replicas"] = str(current)
+                    replicas = 0
+                else:
+                    replicas = int(annotations.get("cloud-dwh/prev-replicas", str(current)) or "1")
+                    if target is not None:
+                        replicas = target
+                # Strimzi often requires replicas >= 1; on stop delete pods via deployment scale
+                if replicas == 0:
+                    replicas = 1  # keep CR valid; hibernation approximated by scaling sts above
+                patch = {
+                    "metadata": {"annotations": annotations},
+                    "spec": {"kafka": {"replicas": replicas}},
+                }
+                self.custom.patch_namespaced_custom_object(
+                    "kafka.strimzi.io", "v1beta2", self.namespace, "kafkas", kname, patch
+                )
+        except ApiException as e:
+            if e.status not in (404, 403):
+                logger.warning("Kafka scale patch failed: %s", e)
+
+        if save_prev and target == 0:
+            # Ensure compute is down even if CR controllers fight back briefly
+            self._restart_pods(delete_only=True)
+
+    def _restart_pods(self, delete_only: bool = False):
+        pods = self.core.list_namespaced_pod(self.namespace).items
+        for pod in pods:
+            try:
+                self.core.delete_namespaced_pod(pod.metadata.name, self.namespace)
+            except ApiException as e:
+                if e.status != 404:
+                    logger.warning("Pod delete failed %s: %s", pod.metadata.name, e)
+        if delete_only:
+            return
+

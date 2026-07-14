@@ -10,6 +10,10 @@ class Settings(BaseSettings):
     cluster_total_memory: str = "116Gi"
     ingress_base_domain: str = "192.168.31.195.nip.io"
     server_ip: str = "192.168.31.195"
+    auth_secret: str = "cloud-dwh-dev-secret-change-me"
+    bootstrap_admin_email: str = "admin@cloud-dwh.local"
+    bootstrap_admin_password: str = "ChangeMeAdmin1!"
+    bootstrap_admin_name: str = "Superuser"
 
     class Config:
         env_file = ".env"

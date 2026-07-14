@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.database import init_db
-from app.routers import quota, services, stacks
+from app.routers import admin, auth, quota, services, stacks
 
 
 @asynccontextmanager
@@ -29,6 +29,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(auth.router, prefix="/api/v1")
+app.include_router(admin.router, prefix="/api/v1")
 app.include_router(services.router, prefix="/api/v1")
 app.include_router(quota.router, prefix="/api/v1")
 app.include_router(stacks.router, prefix="/api/v1")

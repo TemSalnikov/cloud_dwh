@@ -29,6 +29,14 @@ spec:
               value: {{ .Values.platformApi.env.REDIS_URL | quote }}
             - name: KUBECONFIG_IN_CLUSTER
               value: {{ .Values.platformApi.env.KUBECONFIG_IN_CLUSTER | quote }}
+            {{- if .Values.platformApi.env.INGRESS_BASE_DOMAIN }}
+            - name: INGRESS_BASE_DOMAIN
+              value: {{ .Values.platformApi.env.INGRESS_BASE_DOMAIN | quote }}
+            {{- end }}
+            {{- if .Values.platformApi.env.SERVER_IP }}
+            - name: SERVER_IP
+              value: {{ .Values.platformApi.env.SERVER_IP | quote }}
+            {{- end }}
           resources:
             {{- toYaml .Values.platformApi.resources | nindent 12 }}
           livenessProbe:

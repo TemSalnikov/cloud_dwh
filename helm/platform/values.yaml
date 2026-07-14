@@ -30,7 +30,7 @@ platformApi:
   enabled: true
   image:
     repository: cloud-dwh/platform-api
-    tag: "0.1.0"
+    tag: "0.1.5"
     pullPolicy: Never
   replicaCount: 1
   resources:
@@ -43,12 +43,14 @@ platformApi:
     REDIS_URL: "redis://platform-redis:6379/0"
     KUBECONFIG_IN_CLUSTER: "true"
     HELM_CHARTS_PATH: "/charts/stacks"
+    INGRESS_BASE_DOMAIN: "192.168.31.195.nip.io"
+    SERVER_IP: "192.168.31.195"
 
 platformUi:
   enabled: true
   image:
     repository: cloud-dwh/platform-ui
-    tag: "0.1.0"
+    tag: "0.1.5"
     pullPolicy: Never
   replicaCount: 1
   resources:

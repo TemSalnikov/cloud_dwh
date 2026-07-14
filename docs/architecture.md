@@ -73,13 +73,25 @@ sequenceDiagram
 
 | Method | Path | Описание |
 |--------|------|----------|
-| GET | `/api/v1/services` | Каталог доступных сервисов и presets |
+| POST | `/api/v1/auth/register` | Регистрация (email + пароль) |
+| POST | `/api/v1/auth/login` | Вход |
+| GET | `/api/v1/auth/me` | Текущий пользователь |
+| GET | `/api/v1/pricing` | Текущий прайс-лист |
+| POST | `/api/v1/pricing/estimate` | Калькулятор стоимости стека |
+| GET | `/api/v1/services` | Каталог сервисов и presets |
 | GET | `/api/v1/quota` | Свободные ресурсы кластера |
 | POST | `/api/v1/stacks` | Создать стек |
-| GET | `/api/v1/stacks` | Список стеков |
-| GET | `/api/v1/stacks/{id}` | Статус, endpoints |
-| PATCH | `/api/v1/stacks/{id}` | Изменить ресурсы |
+| GET | `/api/v1/stacks` | Список стеков пользователя |
+| GET | `/api/v1/stacks/{id}` | Статус, endpoints, цена |
+| PATCH | `/api/v1/stacks/{id}` | Изменить конфигурацию (с пересчётом) |
+| POST | `/api/v1/stacks/{id}/stop` | Остановить |
+| POST | `/api/v1/stacks/{id}/start` | Запустить |
+| POST | `/api/v1/stacks/{id}/restart` | Перезагрузить поды |
 | DELETE | `/api/v1/stacks/{id}` | Удалить стек |
+| GET/PUT | `/api/v1/admin/pricing` | Прайс (superuser) |
+| GET | `/api/v1/admin/stacks` | Все стеки (superuser) |
+| POST | `/api/v1/admin/stacks/{id}/block\|unblock` | Блокировка |
+| DELETE | `/api/v1/admin/stacks/{id}` | Принудительное удаление |
 
 ### 3.3 Модель ресурсов
 
@@ -170,7 +182,7 @@ Ingress annotations: `cert-manager.io/cluster-issuer: selfsigned`
 - **Изоляция**: namespace + NetworkPolicy (deny cross-stack)
 - **Секреты**: External Secrets или Kubernetes Secrets (генерируются API)
 - **RBAC**: ServiceAccount на стек, platform-api — cluster-admin для Helm
-- **Аутентификация UI**: Keycloak (Phase 2) или basic auth (MVP)
+- **Аутентификация UI**: email/password + signed token (MVP); Keycloak SSO (Phase 2)
 
 ## 8. Presets ресурсов
 
@@ -179,6 +191,20 @@ Ingress annotations: `cert-manager.io/cluster-issuer: selfsigned`
 | `minimal` | 32 GB | 12 | Dev: 1 CH, 1 Kafka, AF+SS |
 | `standard` | 64 GB | 24 | 2 CH, 1 Kafka, 2 AF workers |
 | `full` | 96 GB | 36 | 4 CH, 3 Kafka, полный стек |
+
+### Биллинг (калькулятор)
+
+Ориентиры рынка 2026 ([VK Cloud](https://cloud.vk.com/pricelist/), [Selectel](https://selectel.ru/services/cloud/servers/)):
+
+| Ресурс | Default Cloud DWH | Рынок |
+|--------|-------------------|-------|
+| vCPU / мес | 780 ₽ | VK ~849 ₽ |
+| RAM Gi / мес | 210 ₽ | VK ~223 ₽ |
+| SSD Gi / мес | 12 ₽ | Selectel ~9–11, VK ~13 |
+| Managed service / мес | 490 ₽ | PaaS-надбавка |
+
+При `stopped` / `blocked` compute не тарифицируется (как freeze у Selectel), storage остаётся. Прайс редактирует суперпользователь. Default admin: `admin@cloud-dwh.local` (см. `bootstrap_admin_*` в config).
+
 
 ## 9. Ограничения single-node
 

@@ -3,260 +3,622 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Cloud DWH Platform</title>
+  <title>Cloud DWH — панель управления</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=Sora:wght@500;600;700&display=swap" rel="stylesheet">
   <style>
     :root {
-      --bg: #0f1419;
-      --surface: #1a2332;
-      --border: #2d3a4f;
-      --text: #e7ecf3;
-      --muted: #8b9cb3;
-      --accent: #3b82f6;
-      --accent-hover: #2563eb;
-      --success: #22c55e;
-      --warning: #f59e0b;
-      --danger: #ef4444;
+      --bg: #eef2f4; --surface: #fff; --ink: #102027; --muted: #5a6b74; --line: #d7e0e5;
+      --accent: #0d7377; --accent-hover: #0a5f62; --accent-soft: rgba(13,115,119,.1);
+      --ok: #1a8f5b; --ok-soft: rgba(26,143,91,.12); --warn: #b56a00; --warn-soft: rgba(181,106,0,.12);
+      --danger: #c62828; --danger-soft: rgba(198,40,40,.1);
+      --shadow: 0 1px 2px rgba(16,32,39,.04), 0 8px 24px rgba(16,32,39,.06);
+      --radius: 14px; --font: "IBM Plex Sans", sans-serif; --display: "Sora", sans-serif;
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      background: var(--bg);
-      color: var(--text);
-      min-height: 100vh;
+    body { font-family: var(--font); background: var(--bg); color: var(--ink); min-height: 100vh; line-height: 1.45; }
+    button, input, select { font: inherit; } button { cursor: pointer; } a { color: var(--accent); }
+    .hidden { display: none !important; }
+    .auth-shell { min-height: 100vh; display: grid; grid-template-columns: 1.1fr .9fr; }
+    @media (max-width: 960px) { .auth-shell { grid-template-columns: 1fr; } .auth-brand { min-height: 200px; } }
+    .auth-brand {
+      background: radial-gradient(ellipse 80% 60% at 20% 20%, rgba(20,145,155,.35), transparent 60%),
+                  linear-gradient(160deg, #0b2e33, #123a45); color: #e8f4f4; padding: 3rem;
+      display: flex; flex-direction: column; justify-content: space-between;
     }
-    header {
-      background: var(--surface);
-      border-bottom: 1px solid var(--border);
-      padding: 1rem 2rem;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-    }
-    header h1 { font-size: 1.25rem; font-weight: 600; }
-    .quota-bar {
-      display: flex;
-      gap: 1.5rem;
-      font-size: 0.875rem;
-      color: var(--muted);
-    }
-    .quota-bar span strong { color: var(--text); }
-    main { max-width: 1200px; margin: 0 auto; padding: 2rem; }
-    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 2rem; }
-    @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
-    .card {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      padding: 1.5rem;
-    }
-    .card h2 { font-size: 1rem; margin-bottom: 1rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
-    label { display: block; font-size: 0.875rem; margin-bottom: 0.25rem; color: var(--muted); }
-    input, select {
-      width: 100%;
-      padding: 0.625rem 0.75rem;
-      background: var(--bg);
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      color: var(--text);
-      font-size: 0.875rem;
-      margin-bottom: 1rem;
-    }
-    .service-item {
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      padding: 1rem;
-      margin-bottom: 0.75rem;
-      transition: border-color 0.2s;
-    }
+    .brand-mark { font-family: var(--display); font-weight: 700; font-size: 1.35rem; }
+    .brand-mark span { color: #7ad4d0; }
+    .auth-hero h1 { font-family: var(--display); font-size: clamp(1.7rem, 3vw, 2.4rem); line-height: 1.15; letter-spacing: -.03em; margin: 1rem 0; }
+    .auth-hero p { color: rgba(232,244,244,.78); max-width: 24rem; }
+    .auth-points { margin-top: 2rem; display: grid; gap: .7rem; list-style: none; font-size: .92rem; color: rgba(232,244,244,.82); }
+    .auth-points li { display: flex; gap: .7rem; } .auth-points li::before { content: ""; width: 8px; height: 8px; margin-top: .45rem; border-radius: 50%; background: #7ad4d0; flex-shrink: 0; }
+    .auth-panel { display: flex; align-items: center; justify-content: center; padding: 2rem; }
+    .auth-card { width: 100%; max-width: 420px; background: var(--surface); border: 1px solid var(--line); border-radius: 18px; box-shadow: var(--shadow); padding: 2rem; }
+    .auth-card h2 { font-family: var(--display); font-size: 1.35rem; margin-bottom: .3rem; }
+    .auth-card .sub { color: var(--muted); font-size: .9rem; margin-bottom: 1.4rem; }
+    .tabs { display: grid; grid-template-columns: 1fr 1fr; gap: .3rem; background: var(--bg); padding: .3rem; border-radius: 10px; margin-bottom: 1.4rem; }
+    .tabs button { border: none; background: transparent; padding: .65rem; border-radius: 8px; color: var(--muted); font-weight: 500; }
+    .tabs button.active { background: #fff; color: var(--ink); box-shadow: 0 1px 2px rgba(16,32,39,.08); }
+    .field { margin-bottom: 1rem; }
+    .field label { display: block; font-size: .82rem; font-weight: 500; margin-bottom: .35rem; color: var(--muted); }
+    .field input, .field select { width: 100%; padding: .75rem .85rem; border: 1px solid var(--line); border-radius: 10px; background: #fff; outline: none; }
+    .field input:focus, .field select:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+    .field .hint { font-size: .75rem; color: var(--muted); margin-top: .3rem; }
+    .btn { display: inline-flex; align-items: center; justify-content: center; gap: .4rem; border-radius: 10px; padding: .72rem 1.05rem; font-weight: 600; border: 1px solid transparent; font-size: .875rem; }
+    .btn:disabled { opacity: .5; cursor: not-allowed; }
+    .btn-primary { background: var(--accent); color: #fff; } .btn-primary:hover:not(:disabled) { background: var(--accent-hover); }
+    .btn-ghost { background: transparent; border-color: var(--line); color: var(--ink); } .btn-ghost:hover:not(:disabled) { background: var(--bg); }
+    .btn-danger { background: transparent; border-color: var(--danger); color: var(--danger); } .btn-danger:hover:not(:disabled) { background: var(--danger-soft); }
+    .btn-warn { background: transparent; border-color: var(--warn); color: var(--warn); }
+    .btn-sm { padding: .4rem .7rem; font-size: .78rem; }
+    .btn-block { width: 100%; }
+    .alert { padding: .75rem .9rem; border-radius: 10px; font-size: .875rem; margin-bottom: 1rem; }
+    .alert-error { background: var(--danger-soft); color: var(--danger); }
+    .alert-ok { background: var(--ok-soft); color: var(--ok); }
+    .alert-warn { background: var(--warn-soft); color: var(--warn); }
+    .app-shell { min-height: 100vh; display: flex; flex-direction: column; }
+    .topbar { background: var(--surface); border-bottom: 1px solid var(--line); padding: .85rem 1.5rem; display: flex; align-items: center; justify-content: space-between; gap: 1rem; position: sticky; top: 0; z-index: 20; }
+    .topbar-left { display: flex; align-items: center; gap: 1.25rem; flex-wrap: wrap; }
+    .logo { font-family: var(--display); font-weight: 700; text-decoration: none; color: var(--ink); }
+    .logo span { color: var(--accent); }
+    .nav-links { display: flex; gap: .35rem; }
+    .nav-links button { border: none; background: transparent; color: var(--muted); font-weight: 500; padding: .45rem .75rem; border-radius: 8px; }
+    .nav-links button.active, .nav-links button:hover { background: var(--accent-soft); color: var(--accent); }
+    .quota-chips { display: flex; gap: .45rem; flex-wrap: wrap; }
+    .chip { font-size: .75rem; color: var(--muted); background: var(--bg); border: 1px solid var(--line); border-radius: 999px; padding: .3rem .65rem; }
+    .chip strong { color: var(--ink); }
+    .user-menu { display: flex; align-items: center; gap: .7rem; font-size: .85rem; }
+    .avatar { width: 34px; height: 34px; border-radius: 50%; background: var(--accent-soft); color: var(--accent); display: grid; place-items: center; font-weight: 600; font-size: .8rem; }
+    .page { width: min(1200px, calc(100% - 2rem)); margin: 0 auto; padding: 1.75rem 0 3rem; }
+    .page-head { display: flex; justify-content: space-between; align-items: flex-end; gap: 1rem; margin-bottom: 1.4rem; flex-wrap: wrap; }
+    .page-head h1 { font-family: var(--display); font-size: 1.6rem; letter-spacing: -.03em; }
+    .page-head p { color: var(--muted); margin-top: .25rem; }
+    .empty { background: var(--surface); border: 1px dashed var(--line); border-radius: var(--radius); padding: 3rem 2rem; text-align: center; }
+    .empty h3 { font-family: var(--display); margin-bottom: .4rem; }
+    .empty p { color: var(--muted); margin-bottom: 1.2rem; max-width: 28rem; margin-inline: auto; }
+    .stack-grid, .admin-grid { display: grid; gap: 1rem; }
+    .stack-card, .panel { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 1.25rem 1.35rem; box-shadow: var(--shadow); }
+    .stack-card-top { display: flex; justify-content: space-between; gap: 1rem; align-items: flex-start; margin-bottom: .85rem; }
+    .stack-card h3 { font-family: var(--display); font-size: 1.05rem; }
+    .stack-ns { font-size: .78rem; color: var(--muted); margin-top: .15rem; }
+    .status { font-size: .7rem; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; padding: .28rem .55rem; border-radius: 999px; white-space: nowrap; }
+    .status.running { background: var(--ok-soft); color: var(--ok); }
+    .status.pending, .status.deploying, .status.deleting, .status.updating, .status.stopped { background: var(--warn-soft); color: var(--warn); }
+    .status.failed, .status.blocked { background: var(--danger-soft); color: var(--danger); }
+    .cost-line { display: flex; justify-content: space-between; gap: 1rem; font-size: .9rem; margin: .35rem 0; }
+    .cost-big { font-family: var(--display); font-size: 1.35rem; letter-spacing: -.02em; }
+    .svc-table { width: 100%; border-collapse: collapse; font-size: .84rem; margin-top: .5rem; }
+    .svc-table th { text-align: left; color: var(--muted); font-weight: 500; padding: .45rem .4rem; border-bottom: 1px solid var(--line); }
+    .svc-table td { padding: .5rem .4rem; border-bottom: 1px solid #eef2f4; vertical-align: top; word-break: break-all; }
+    .stack-actions { display: flex; flex-wrap: wrap; gap: .45rem; margin-top: 1rem; }
+    .wizard-layout { display: grid; grid-template-columns: minmax(0,1fr) 340px; gap: 1.25rem; align-items: start; }
+    @media (max-width: 980px) { .wizard-layout { grid-template-columns: 1fr; } .summary-panel { position: static !important; } }
+    .wizard-blocks { display: grid; gap: 1rem; }
+    .block { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 1.35rem 1.4rem; box-shadow: var(--shadow); }
+    .block h2 { font-family: var(--display); font-size: 1.05rem; margin-bottom: .25rem; }
+    .block .desc { color: var(--muted); font-size: .875rem; margin-bottom: 1rem; }
+    .preset-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: .75rem; }
+    @media (max-width: 720px) { .preset-grid { grid-template-columns: 1fr; } }
+    .preset-card { text-align: left; border: 1.5px solid var(--line); background: #fff; border-radius: 12px; padding: 1rem; }
+    .preset-card.active { border-color: var(--accent); background: var(--accent-soft); }
+    .preset-card strong { display: block; font-family: var(--display); font-size: .95rem; margin-bottom: .2rem; }
+    .preset-card span { display: block; font-size: .8rem; color: var(--muted); }
+    .mode-toggle { display: inline-flex; background: var(--bg); padding: .25rem; border-radius: 10px; margin-bottom: 1rem; gap: .25rem; }
+    .mode-toggle button { border: none; background: transparent; padding: .5rem .9rem; border-radius: 8px; color: var(--muted); font-weight: 500; font-size: .85rem; }
+    .mode-toggle button.active { background: #fff; color: var(--ink); box-shadow: 0 1px 2px rgba(16,32,39,.08); }
+    .service-list { display: grid; gap: .65rem; }
+    .service-item { border: 1.5px solid var(--line); border-radius: 12px; padding: .95rem 1rem; background: #fff; }
     .service-item.enabled { border-color: var(--accent); }
-    .service-header {
-      display: flex;
-      align-items: center;
-      gap: 0.75rem;
-      cursor: pointer;
-    }
-    .service-header input[type=checkbox] { width: auto; margin: 0; }
-    .service-header h3 { font-size: 0.9375rem; flex: 1; }
-    .service-config {
-      display: none;
-      margin-top: 1rem;
-      padding-top: 1rem;
-      border-top: 1px solid var(--border);
-    }
-    .service-item.enabled .service-config { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0.75rem; }
-    .preset-buttons { display: flex; gap: 0.5rem; margin-bottom: 1rem; flex-wrap: wrap; }
-    .preset-btn {
-      padding: 0.5rem 1rem;
-      background: var(--bg);
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      color: var(--text);
-      cursor: pointer;
-      font-size: 0.8125rem;
-    }
-    .preset-btn:hover, .preset-btn.active { border-color: var(--accent); background: rgba(59,130,246,0.1); }
-    button.primary {
-      width: 100%;
-      padding: 0.75rem;
-      background: var(--accent);
-      color: white;
-      border: none;
-      border-radius: 8px;
-      font-size: 0.9375rem;
-      font-weight: 500;
-      cursor: pointer;
-      margin-top: 1rem;
-    }
-    button.primary:hover { background: var(--accent-hover); }
-    button.primary:disabled { opacity: 0.5; cursor: not-allowed; }
-    .stack-list { list-style: none; }
-    .stack-item {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      padding: 0.75rem 0;
-      border-bottom: 1px solid var(--border);
-    }
-    .stack-item:last-child { border-bottom: none; }
-    .status {
-      font-size: 0.75rem;
-      padding: 0.25rem 0.5rem;
-      border-radius: 4px;
-      text-transform: uppercase;
-    }
-    .status.running { background: rgba(34,197,94,0.2); color: var(--success); }
-    .status.pending, .status.deploying, .status.deleting { background: rgba(245,158,11,0.2); color: var(--warning); }
-    .status.failed { background: rgba(239,68,68,0.2); color: var(--danger); }
-    .stack-actions { display: flex; flex-direction: column; align-items: flex-end; gap: 0.5rem; }
-    button.danger {
-      padding: 0.35rem 0.75rem;
-      background: transparent;
-      border: 1px solid var(--danger);
-      color: var(--danger);
-      border-radius: 6px;
-      font-size: 0.75rem;
-      cursor: pointer;
-    }
-    button.danger:hover { background: rgba(239,68,68,0.15); }
-    button.danger:disabled { opacity: 0.4; cursor: not-allowed; }
-    .message { padding: 0.75rem; border-radius: 8px; margin-top: 1rem; font-size: 0.875rem; }
-    .message.error { background: rgba(239,68,68,0.15); color: var(--danger); }
-    .message.success { background: rgba(34,197,94,0.15); color: var(--success); }
+    .service-head { display: flex; align-items: flex-start; gap: .75rem; cursor: pointer; }
+    .service-head input { margin-top: .2rem; accent-color: var(--accent); width: auto; }
+    .service-head h3 { font-size: .95rem; font-weight: 600; }
+    .service-head p { font-size: .8rem; color: var(--muted); margin-top: .15rem; }
+    .service-config { display: none; grid-template-columns: repeat(3, 1fr); gap: .75rem; margin-top: .9rem; padding-top: .9rem; border-top: 1px solid var(--line); }
+    .service-item.enabled .service-config { display: grid; }
+    .service-config label { display: block; font-size: .75rem; color: var(--muted); margin-bottom: .25rem; }
+    .service-config input { width: 100%; padding: .55rem .65rem; border: 1px solid var(--line); border-radius: 8px; }
+    .summary-panel { position: sticky; top: 78px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 1.25rem; box-shadow: var(--shadow); }
+    .summary-panel h3 { font-family: var(--display); font-size: 1rem; margin-bottom: 1rem; }
+    .summary-rows { display: grid; gap: .5rem; margin-bottom: .5rem; }
+    .summary-row { display: flex; justify-content: space-between; gap: .75rem; font-size: .875rem; }
+    .summary-row span { color: var(--muted); }
+    .summary-divider { height: 1px; background: var(--line); margin: .85rem 0; }
+    .summary-services { display: flex; flex-wrap: wrap; gap: .35rem; margin-bottom: .85rem; min-height: 1.4rem; }
+    .tag { font-size: .72rem; background: var(--bg); border: 1px solid var(--line); border-radius: 999px; padding: .2rem .55rem; color: var(--muted); }
+    .price-note { font-size: .72rem; color: var(--muted); margin: .6rem 0 1rem; line-height: 1.4; }
+    .breadcrumb { display: flex; align-items: center; gap: .5rem; font-size: .85rem; color: var(--muted); margin-bottom: 1rem; }
+    .breadcrumb button { border: none; background: none; color: var(--accent); font-weight: 500; padding: 0; }
+    .two-col { display: grid; grid-template-columns: 1.2fr .8fr; gap: 1rem; }
+    @media (max-width: 900px) { .two-col { grid-template-columns: 1fr; } }
+    .price-fields { display: grid; grid-template-columns: 1fr 1fr; gap: .75rem; }
+    .modal-backdrop { position: fixed; inset: 0; background: rgba(16,32,39,.45); display: flex; align-items: center; justify-content: center; z-index: 50; padding: 1rem; }
+    .modal { background: #fff; border-radius: 16px; width: min(720px, 100%); max-height: 90vh; overflow: auto; padding: 1.4rem; box-shadow: var(--shadow); }
+    .modal h2 { font-family: var(--display); margin-bottom: .75rem; }
   </style>
 </head>
 <body>
-  <header>
-    <h1>Cloud DWH Platform</h1>
-    <div class="quota-bar" id="quota"></div>
-  </header>
-  <main>
-    <div class="grid">
-      <div class="card">
-        <h2>Новый стек</h2>
-        <label for="stack-name">Имя стека</label>
-        <input id="stack-name" placeholder="my-analytics" pattern="[a-z][a-z0-9-]*">
-
-        <label>Preset</label>
-        <div class="preset-buttons" id="presets"></div>
-
-        <div id="services"></div>
-
-        <button class="primary" id="deploy-btn" onclick="deployStack()">Развернуть стек</button>
-        <div id="message"></div>
+  <div id="view-auth" class="auth-shell">
+    <aside class="auth-brand">
+      <div class="brand-mark">Cloud<span>DWH</span></div>
+      <div class="auth-hero">
+        <h1>Кластер, цена и контроль в одной панели</h1>
+        <p>Калькулятор по рыночным тарифам, управление своим стеком и консоль суперпользователя.</p>
+        <ul class="auth-points">
+          <li>Ориентиры цен: VK Cloud / Selectel (₽/мес за vCPU, RAM, SSD)</li>
+          <li>Пользователь: стоп / старт / рестарт / правка / удаление</li>
+          <li>Админ: блок, цены, удаление любых кластеров</li>
+        </ul>
       </div>
-
-      <div class="card">
-        <h2>Активные стеки</h2>
-        <ul class="stack-list" id="stacks"></ul>
+      <div style="font-size:.8rem;color:rgba(232,244,244,.55)">Default admin: admin@cloud-dwh.local</div>
+    </aside>
+    <section class="auth-panel">
+      <div class="auth-card">
+        <h2 id="auth-title">Вход в панель</h2>
+        <p class="sub" id="auth-sub">Управляйте DWH-кластерами и биллингом</p>
+        <div class="tabs">
+          <button type="button" class="active" id="tab-login" onclick="setAuthMode('login')">Войти</button>
+          <button type="button" id="tab-register" onclick="setAuthMode('register')">Регистрация</button>
+        </div>
+        <div id="auth-alert"></div>
+        <form id="auth-form" onsubmit="submitAuth(event)">
+          <div class="field hidden" id="field-name">
+            <label for="reg-name">Имя</label>
+            <input id="reg-name" autocomplete="name" placeholder="Иван Иванов">
+          </div>
+          <div class="field">
+            <label for="auth-email">Электронная почта</label>
+            <input id="auth-email" type="email" required autocomplete="email" placeholder="you@company.ru">
+          </div>
+          <div class="field">
+            <label for="auth-password">Пароль</label>
+            <input id="auth-password" type="password" required minlength="8" autocomplete="current-password">
+          </div>
+          <button class="btn btn-primary btn-block" type="submit" id="auth-submit">Войти</button>
+        </form>
       </div>
-    </div>
-  </main>
+    </section>
+  </div>
+
+  <div id="view-app" class="app-shell hidden">
+    <header class="topbar">
+      <div class="topbar-left">
+        <a href="#" class="logo" onclick="showPage('dashboard');return false;">Cloud<span>DWH</span></a>
+        <nav class="nav-links">
+          <button type="button" id="nav-dashboard" class="active" onclick="showPage('dashboard')">Стеки</button>
+          <button type="button" id="nav-admin" class="hidden" onclick="showPage('admin')">Админ</button>
+        </nav>
+        <div class="quota-chips" id="quota"></div>
+      </div>
+      <div class="user-menu">
+        <div class="avatar" id="user-avatar">?</div>
+        <div>
+          <div id="user-name" style="font-weight:600"></div>
+          <div id="user-email" style="font-size:.75rem;color:var(--muted)"></div>
+        </div>
+        <button class="btn btn-ghost btn-sm" onclick="logout()">Выйти</button>
+      </div>
+    </header>
+
+    <main class="page">
+      <section id="page-dashboard">
+        <div class="page-head">
+          <div>
+            <h1>Мои стеки</h1>
+            <p>Управление кластерами и расчёт стоимости</p>
+          </div>
+          <button class="btn btn-primary" onclick="showWizard()">Создать стек</button>
+        </div>
+        <div id="stacks-root"></div>
+      </section>
+
+      <section id="page-wizard" class="hidden">
+        <div class="breadcrumb">
+          <button type="button" onclick="showPage('dashboard')">Мои стеки</button>
+          <span>/</span>
+          <span id="wizard-crumb">Новый стек</span>
+        </div>
+        <div class="page-head">
+          <div>
+            <h1 id="wizard-title">Конфигурация кластера</h1>
+            <p>Цены пересчитываются при любом изменении ресурсов</p>
+          </div>
+        </div>
+        <div class="wizard-layout">
+          <div class="wizard-blocks">
+            <div class="block" id="name-block">
+              <h2>1. Имя</h2>
+              <p class="desc">Идентификатор namespace. После создания не меняется.</p>
+              <div class="field" style="margin-bottom:0">
+                <label for="stack-name">Имя стека</label>
+                <input id="stack-name" placeholder="analytics-prod" pattern="[a-z][a-z0-9-]*" oninput="refreshSummary()">
+              </div>
+            </div>
+            <div class="block">
+              <h2 id="cfg-step-title">2. Конфигурация</h2>
+              <p class="desc">Фиксированный пресет или произвольная сборка.</p>
+              <div class="mode-toggle">
+                <button type="button" class="active" id="mode-preset" onclick="setConfigMode('preset')">Фиксированная</button>
+                <button type="button" id="mode-custom" onclick="setConfigMode('custom')">Произвольная</button>
+              </div>
+              <div id="preset-grid" class="preset-grid"></div>
+            </div>
+            <div class="block">
+              <h2 id="svc-step-title">3. Сервисы</h2>
+              <p class="desc">CPU / RAM / диск влияют на калькулятор.</p>
+              <div id="services" class="service-list"></div>
+            </div>
+          </div>
+          <aside class="summary-panel">
+            <h3>Калькулятор</h3>
+            <div class="summary-rows">
+              <div class="summary-row"><span>Имя</span><strong id="sum-name">—</strong></div>
+              <div class="summary-row"><span>Режим</span><strong id="sum-mode">—</strong></div>
+              <div class="summary-row"><span>CPU</span><strong id="sum-cpu">0</strong></div>
+              <div class="summary-row"><span>RAM</span><strong id="sum-ram">0 Gi</strong></div>
+              <div class="summary-row"><span>Storage</span><strong id="sum-storage">0 Gi</strong></div>
+            </div>
+            <div class="summary-divider"></div>
+            <div class="summary-services" id="sum-services"></div>
+            <div class="cost-line"><span>Compute</span><strong id="sum-compute">0 ₽</strong></div>
+            <div class="cost-line"><span>Storage</span><strong id="sum-storage-cost">0 ₽</strong></div>
+            <div class="cost-line"><span>Managed</span><strong id="sum-managed">0 ₽</strong></div>
+            <div class="summary-divider"></div>
+            <div class="cost-line"><span>Итого / мес</span><strong class="cost-big" id="sum-monthly">0 ₽</strong></div>
+            <div class="cost-line"><span>≈ в час</span><strong id="sum-hourly">0 ₽</strong></div>
+            <p class="price-note" id="price-note"></p>
+            <div id="deploy-alert"></div>
+            <button class="btn btn-primary btn-block" id="deploy-btn" onclick="submitWizard()">Развернуть</button>
+            <button class="btn btn-ghost btn-block" style="margin-top:.5rem" onclick="showPage('dashboard')">Отмена</button>
+          </aside>
+        </div>
+      </section>
+
+      <section id="page-admin" class="hidden">
+        <div class="page-head">
+          <div>
+            <h1>Консоль суперпользователя</h1>
+            <p>Цены, блокировка кластеров, пользователи</p>
+          </div>
+        </div>
+        <div class="two-col">
+          <div class="panel">
+            <h2 style="font-family:var(--display);font-size:1.05rem;margin-bottom:.35rem">Прайс-лист</h2>
+            <p class="desc" style="color:var(--muted);font-size:.85rem;margin-bottom:1rem" id="admin-price-note"></p>
+            <div class="price-fields" id="price-fields"></div>
+            <div id="price-alert" style="margin-top:1rem"></div>
+            <button class="btn btn-primary" style="margin-top:1rem" onclick="savePrices()">Сохранить цены</button>
+            <button class="btn btn-ghost" style="margin-top:1rem;margin-left:.5rem" onclick="resetPrices()">Сбросить к defaults</button>
+          </div>
+          <div class="panel">
+            <h2 style="font-family:var(--display);font-size:1.05rem;margin-bottom:.75rem">Пользователи</h2>
+            <div id="admin-users"></div>
+          </div>
+        </div>
+        <div class="panel" style="margin-top:1rem">
+          <h2 style="font-family:var(--display);font-size:1.05rem;margin-bottom:.75rem">Все кластеры</h2>
+          <div id="admin-stacks"></div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div id="modal-root"></div>
 
   <script>
     const API = window.API_URL || '/api/v1';
+    const TOKEN_KEY = 'cloud_dwh_token';
+    const USER_KEY = 'cloud_dwh_user';
     let catalog = { services: {}, presets: {} };
-    let selectedPreset = null;
+    let prices = {};
+    let authMode = 'login';
+    let configMode = 'preset';
+    let selectedPreset = 'minimal';
+    let currentUser = null;
+    let editingStackId = null;
+    let estimateTimer = null;
+    let stacksById = {};
 
-    async function fetchJSON(url, opts) {
-      const r = await fetch(API + url, opts);
+    const SERVICE_LABELS = {
+      clickhouse: 'ClickHouse', clickhouse_web: 'ClickHouse Web', kafka: 'Kafka',
+      kafka_ui: 'Kafka UI', postgres: 'PostgreSQL', airflow: 'Airflow', superset: 'Superset',
+    };
+    const SERVICE_ORDER = ['clickhouse','clickhouse_web','kafka','kafka_ui','postgres','airflow','superset'];
+
+    function token() { return localStorage.getItem(TOKEN_KEY); }
+    function money(n) { return `${Number(n || 0).toLocaleString('ru-RU', { maximumFractionDigits: 2 })} ₽`; }
+    function escapeHtml(s) {
+      return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+
+    async function fetchJSON(url, opts = {}) {
+      const headers = { ...(opts.headers || {}) };
+      if (token()) headers.Authorization = `Bearer ${token()}`;
+      if (opts.body && !headers['Content-Type']) headers['Content-Type'] = 'application/json';
+      const r = await fetch(API + url, { ...opts, headers });
+      if (r.status === 401) { logout(false); throw new Error('Сессия истекла'); }
       if (!r.ok) {
         const err = await r.json().catch(() => ({}));
-        throw new Error(err.detail || r.statusText);
+        const detail = err.detail;
+        const message = Array.isArray(detail) ? detail.map(d => d.msg || JSON.stringify(d)).join('; ') : (detail || r.statusText);
+        throw new Error(message);
       }
       if (r.status === 204) return null;
       return r.json();
     }
 
-    async function loadQuota() {
-      const q = await fetchJSON('/quota');
-      document.getElementById('quota').innerHTML = `
-        <span>CPU: <strong>${q.used.cpu.toFixed(1)}</strong> / ${q.cluster.total_cpu}</span>
-        <span>RAM: <strong>${q.used.memory}</strong> / ${q.cluster.total_memory}</span>
-        <span>Стеков: <strong>${q.active_stacks}</strong></span>
-      `;
+    function setAuthMode(mode) {
+      authMode = mode;
+      document.getElementById('tab-login').classList.toggle('active', mode === 'login');
+      document.getElementById('tab-register').classList.toggle('active', mode === 'register');
+      document.getElementById('field-name').classList.toggle('hidden', mode !== 'register');
+      document.getElementById('auth-title').textContent = mode === 'login' ? 'Вход в панель' : 'Создать аккаунт';
+      document.getElementById('auth-sub').textContent = mode === 'login' ? 'Управляйте кластерами и биллингом' : 'Email + пароль — сразу в панель';
+      document.getElementById('auth-submit').textContent = mode === 'login' ? 'Войти' : 'Создать аккаунт';
+      document.getElementById('auth-alert').innerHTML = '';
     }
 
-    function renderPresets() {
-      const el = document.getElementById('presets');
-      el.innerHTML = Object.entries(catalog.presets).map(([k, p]) =>
-        `<button class="preset-btn" onclick="applyPreset('${k}')">${p.name}</button>`
-      ).join('') + `<button class="preset-btn" onclick="clearPreset()">Custom</button>`;
+    async function submitAuth(e) {
+      e.preventDefault();
+      const alert = document.getElementById('auth-alert');
+      alert.innerHTML = '';
+      const email = document.getElementById('auth-email').value.trim();
+      const password = document.getElementById('auth-password').value;
+      const btn = document.getElementById('auth-submit');
+      btn.disabled = true;
+      try {
+        const body = authMode === 'register'
+          ? { email, password, name: document.getElementById('reg-name').value.trim() || email.split('@')[0] }
+          : { email, password };
+        const data = await fetchJSON(authMode === 'register' ? '/auth/register' : '/auth/login', {
+          method: 'POST', body: JSON.stringify(body),
+        });
+        localStorage.setItem(TOKEN_KEY, data.token);
+        localStorage.setItem(USER_KEY, JSON.stringify(data.user));
+        currentUser = data.user;
+        await enterApp();
+      } catch (err) {
+        alert.innerHTML = `<div class="alert alert-error">${escapeHtml(err.message)}</div>`;
+      } finally { btn.disabled = false; }
     }
 
-    function renderServices() {
-      const el = document.getElementById('services');
-      el.innerHTML = Object.entries(catalog.services).map(([key, svc]) => `
-        <div class="service-item" id="svc-${key}">
-          <div class="service-header" onclick="toggleService('${key}')">
-            <input type="checkbox" id="chk-${key}" onclick="event.stopPropagation(); toggleService('${key}')">
-            <h3>${svc.name}</h3>
-          </div>
-          <div class="service-config">
-            ${key === 'clickhouse' ? `<div><label>Replicas</label><input type="number" id="${key}-replicas" value="${svc.defaults.replicas||1}" min="1" max="4"></div>` : ''}
-            ${key === 'kafka' ? `<div><label>Brokers</label><input type="number" id="${key}-brokers" value="${svc.defaults.brokers||1}" min="1" max="3"></div>` : ''}
-            ${key === 'airflow' ? `<div><label>Workers</label><input type="number" id="${key}-workers" value="${svc.defaults.workers||1}" min="1" max="8"></div>` : ''}
-            <div><label>CPU</label><input id="${key}-cpu" value="${svc.defaults.cpu}"></div>
-            <div><label>Memory</label><input id="${key}-memory" value="${svc.defaults.memory}"></div>
-            ${svc.defaults.storage ? `<div><label>Storage</label><input id="${key}-storage" value="${svc.defaults.storage}"></div>` : ''}
-          </div>
-        </div>
-      `).join('');
-    }
-
-    function toggleService(key) {
-      const chk = document.getElementById('chk-' + key);
-      chk.checked = !chk.checked;
-      document.getElementById('svc-' + key).classList.toggle('enabled', chk.checked);
-      selectedPreset = null;
-      document.querySelectorAll('.preset-btn').forEach(b => b.classList.remove('active'));
-    }
-
-    function applyPreset(key) {
-      selectedPreset = key;
-      document.querySelectorAll('.preset-btn').forEach(b => b.classList.remove('active'));
-      event.target.classList.add('active');
-      const preset = catalog.presets[key].services;
-      for (const [svc, cfg] of Object.entries(catalog.services)) {
-        const enabled = preset[svc]?.enabled || false;
-        document.getElementById('chk-' + svc).checked = enabled;
-        document.getElementById('svc-' + svc).classList.toggle('enabled', enabled);
-        if (enabled && preset[svc]) {
-          const p = preset[svc];
-          if (p.replicas) document.getElementById(svc + '-replicas').value = p.replicas;
-          if (p.brokers) document.getElementById(svc + '-brokers').value = p.brokers;
-          if (p.workers) document.getElementById(svc + '-workers').value = p.workers;
-          if (p.resources) {
-            document.getElementById(svc + '-cpu').value = p.resources.cpu;
-            document.getElementById(svc + '-memory').value = p.resources.memory;
-            if (p.resources.storage) document.getElementById(svc + '-storage').value = p.resources.storage;
-          }
-        }
+    function logout(reload = true) {
+      localStorage.removeItem(TOKEN_KEY);
+      localStorage.removeItem(USER_KEY);
+      currentUser = null;
+      if (reload) {
+        document.getElementById('view-app').classList.add('hidden');
+        document.getElementById('view-auth').classList.remove('hidden');
+        setAuthMode('login');
       }
     }
 
-    function clearPreset() {
-      selectedPreset = null;
-      document.querySelectorAll('.preset-btn').forEach(b => b.classList.remove('active'));
+    async function enterApp() {
+      document.getElementById('view-auth').classList.add('hidden');
+      document.getElementById('view-app').classList.remove('hidden');
+      document.getElementById('user-name').textContent = currentUser.name + (currentUser.is_superuser ? ' · admin' : '');
+      document.getElementById('user-email').textContent = currentUser.email;
+      document.getElementById('user-avatar').textContent = (currentUser.name || '?').slice(0, 1).toUpperCase();
+      document.getElementById('nav-admin').classList.toggle('hidden', !currentUser.is_superuser);
+      catalog = await fetchJSON('/services');
+      const p = await fetchJSON('/pricing');
+      prices = p.prices;
+      document.getElementById('price-note').textContent = prices.source_note || '';
+      renderPresets();
+      renderServices();
+      showPage('dashboard');
+      loadQuota();
+      loadStacks();
+    }
+
+    function showPage(name) {
+      ['dashboard', 'wizard', 'admin'].forEach(p => {
+        document.getElementById('page-' + p).classList.toggle('hidden', p !== name);
+        const nav = document.getElementById('nav-' + p);
+        if (nav) nav.classList.toggle('active', p === name);
+      });
+      if (name === 'dashboard') { loadStacks(); loadQuota(); }
+      if (name === 'admin' && currentUser?.is_superuser) loadAdmin();
+    }
+
+    function showWizard(editStack = null) {
+      editingStackId = editStack?.id || null;
+      document.getElementById('wizard-title').textContent = editingStackId ? 'Изменить конфигурацию' : 'Конфигурация кластера';
+      document.getElementById('wizard-crumb').textContent = editingStackId ? editStack.name : 'Новый стек';
+      document.getElementById('deploy-btn').textContent = editingStackId ? 'Применить и пересчитать' : 'Развернуть';
+      document.getElementById('name-block').classList.toggle('hidden', !!editingStackId);
+      document.getElementById('stack-name').value = editStack?.name || '';
+      document.getElementById('deploy-alert').innerHTML = '';
+      showPage('wizard');
+      if (editStack?.spec) {
+        setConfigMode('custom');
+        applySpecToForm(editStack.spec);
+      } else {
+        setConfigMode('preset');
+        applyPreset('minimal', true);
+      }
+      refreshSummary();
+    }
+
+    async function loadQuota() {
+      try {
+        const q = await fetchJSON('/quota');
+        document.getElementById('quota').innerHTML = `
+          <span class="chip">CPU <strong>${q.used.cpu.toFixed(1)}</strong> / ${q.cluster.total_cpu}</span>
+          <span class="chip">RAM <strong>${q.used.memory}</strong> / ${q.cluster.total_memory}</span>
+          <span class="chip">Стеков <strong>${q.active_stacks}</strong></span>`;
+      } catch (_) {}
+    }
+
+    function parseEndpoint(raw) {
+      if (!raw) return { host: '—', port: '—', href: null };
+      try {
+        if (raw.startsWith('http://') || raw.startsWith('https://')) {
+          const u = new URL(raw);
+          return { host: u.hostname, port: u.port || (u.protocol === 'https:' ? '443' : '80'), href: raw };
+        }
+        const idx = raw.lastIndexOf(':');
+        if (idx > 0 && /^\d+$/.test(raw.slice(idx + 1))) return { host: raw.slice(0, idx), port: raw.slice(idx + 1), href: null };
+        return { host: raw, port: '—', href: null };
+      } catch { return { host: raw, port: '—', href: null }; }
+    }
+
+    function renderEndpointsTable(endpoints) {
+      if (!endpoints || !Object.keys(endpoints).length) return '';
+      const keys = [...SERVICE_ORDER.filter(k => k in endpoints), ...Object.keys(endpoints).filter(k => !SERVICE_ORDER.includes(k))];
+      const rows = keys.map(key => {
+        const { host, port, href } = parseEndpoint(endpoints[key]);
+        const hostCell = href ? `<a href="${href}" target="_blank" rel="noopener">${host}</a>` : host;
+        return `<tr><td>${SERVICE_LABELS[key] || key}</td><td>${hostCell}</td><td>${port}</td></tr>`;
+      }).join('');
+      return `<table class="svc-table"><thead><tr><th>Сервис</th><th>Хост</th><th>Порт</th></tr></thead><tbody>${rows}</tbody></table>`;
+    }
+
+    function costBlock(cost) {
+      if (!cost) return '';
+      return `<div style="margin:.7rem 0;padding:.75rem;background:var(--bg);border-radius:10px">
+        <div class="cost-line"><span>Стоимость / мес (${escapeHtml(cost.status)})</span><strong class="cost-big">${money(cost.monthly)}</strong></div>
+        <div class="cost-line"><span>Compute / Storage / Managed</span><strong>${money(cost.lines.compute)} / ${money(cost.lines.storage)} / ${money(cost.lines.services)}</strong></div>
+      </div>`;
+    }
+
+    async function loadStacks() {
+      const root = document.getElementById('stacks-root');
+      try {
+        const stacks = await fetchJSON('/stacks');
+        if (!stacks.length) {
+          root.innerHTML = `<div class="empty"><h3>Пока нет стеков</h3><p>Соберите конфигурацию — калькулятор покажет цену до деплоя.</p><button class="btn btn-primary" onclick="showWizard()">Создать стек</button></div>`;
+          return;
+        }
+        stacksById = Object.fromEntries(stacks.map(s => [s.id, s]));
+        root.innerHTML = `<div class="stack-grid">${stacks.map(s => {
+          const busy = ['deploying','pending','deleting','updating'].includes(s.status);
+          const blocked = s.status === 'blocked';
+          return `<article class="stack-card">
+            <div class="stack-card-top">
+              <div><h3>${escapeHtml(s.name)}</h3><div class="stack-ns">${escapeHtml(s.namespace)}</div></div>
+              <span class="status ${s.status}">${s.status}</span>
+            </div>
+            ${costBlock(s.cost)}
+            ${blocked && s.blocked_reason ? `<div class="alert alert-error">${escapeHtml(s.blocked_reason)}</div>` : ''}
+            ${!busy && s.endpoints ? renderEndpointsTable(s.endpoints) : ''}
+            ${s.status_message && !blocked ? `<p style="margin-top:.6rem;font-size:.84rem;color:var(--muted)">${escapeHtml(s.status_message)}</p>` : ''}
+            <div class="stack-actions">
+              ${s.status === 'running' ? `<button class="btn btn-ghost btn-sm" ${busy?'disabled':''} onclick="stackAction('${s.id}','stop')">Остановить</button>` : ''}
+              ${s.status === 'stopped' ? `<button class="btn btn-primary btn-sm" onclick="stackAction('${s.id}','start')">Запустить</button>` : ''}
+              ${['running','failed'].includes(s.status) ? `<button class="btn btn-ghost btn-sm" onclick="stackAction('${s.id}','restart')">Перезагрузить</button>` : ''}
+              ${['running','failed'].includes(s.status) ? `<button class="btn btn-ghost btn-sm" onclick="editStack('${s.id}')">Изменить</button>` : ''}
+              <button class="btn btn-danger btn-sm" ${busy||blocked?'disabled':''} onclick="deleteStack('${s.id}','${escapeHtml(s.name)}')">Удалить</button>
+            </div>
+          </article>`;
+        }).join('')}</div>`;
+      } catch (e) {
+        root.innerHTML = `<div class="alert alert-error">${escapeHtml(e.message)}</div>`;
+      }
+    }
+
+    function editStack(id) {
+      const stack = stacksById[id];
+      if (stack) showWizard(stack);
+    }
+
+    async function stackAction(id, action) {
+      try {
+        await fetchJSON(`/stacks/${id}/${action}`, { method: 'POST' });
+        loadStacks(); loadQuota();
+      } catch (e) { alert(e.message); }
+    }
+
+    async function deleteStack(id, name) {
+      if (!confirm(`Удалить стек «${name}»?`)) return;
+      try {
+        await fetchJSON(`/stacks/${id}`, { method: 'DELETE' });
+        loadStacks(); loadQuota();
+      } catch (e) { alert(e.message); }
+    }
+
+    function setConfigMode(mode) {
+      configMode = mode;
+      document.getElementById('mode-preset').classList.toggle('active', mode === 'preset');
+      document.getElementById('mode-custom').classList.toggle('active', mode === 'custom');
+      if (mode === 'preset' && selectedPreset) applyPreset(selectedPreset, true);
+      refreshSummary();
+    }
+
+    function renderPresets() {
+      const meta = {
+        minimal: { title: 'Dev', hint: '~32 GB · разработка' },
+        standard: { title: 'Staging', hint: '~64 GB · пилоты' },
+        full: { title: 'Production-like', hint: '~96 GB · максимум' },
+      };
+      document.getElementById('preset-grid').innerHTML = Object.entries(catalog.presets).map(([k, p]) => `
+        <button type="button" class="preset-card ${selectedPreset === k ? 'active' : ''}" data-preset="${k}" onclick="applyPreset('${k}')">
+          <strong>${meta[k]?.title || p.name}</strong><span>${meta[k]?.hint || p.description}</span>
+        </button>`).join('');
+    }
+
+    function renderServices() {
+      document.getElementById('services').innerHTML = Object.entries(catalog.services).map(([key, svc]) => `
+        <div class="service-item" id="svc-${key}">
+          <div class="service-head" onclick="toggleService('${key}')">
+            <input type="checkbox" id="chk-${key}" onclick="event.stopPropagation(); toggleService('${key}', true)">
+            <div><h3>${svc.name}</h3><p>${svc.description}</p></div>
+          </div>
+          <div class="service-config">
+            ${key === 'clickhouse' ? `<div><label>Replicas</label><input type="number" id="${key}-replicas" value="${svc.defaults.replicas||1}" min="1" max="4" oninput="onCustomChange()"></div>` : ''}
+            ${key === 'kafka' ? `<div><label>Brokers</label><input type="number" id="${key}-brokers" value="${svc.defaults.brokers||1}" min="1" max="3" oninput="onCustomChange()"></div>` : ''}
+            ${key === 'airflow' ? `<div><label>Workers</label><input type="number" id="${key}-workers" value="${svc.defaults.workers||1}" min="1" max="8" oninput="onCustomChange()"></div>` : ''}
+            <div><label>CPU</label><input id="${key}-cpu" value="${svc.defaults.cpu}" oninput="onCustomChange()"></div>
+            <div><label>Memory</label><input id="${key}-memory" value="${svc.defaults.memory}" oninput="onCustomChange()"></div>
+            ${svc.defaults.storage ? `<div><label>Storage</label><input id="${key}-storage" value="${svc.defaults.storage}" oninput="onCustomChange()"></div>` : ''}
+          </div>
+        </div>`).join('');
+    }
+
+    function toggleService(key, fromCheckbox) {
+      const chk = document.getElementById('chk-' + key);
+      if (!fromCheckbox) chk.checked = !chk.checked;
+      document.getElementById('svc-' + key).classList.toggle('enabled', chk.checked);
+      onCustomChange();
+    }
+
+    function onCustomChange() {
+      if (configMode === 'preset') {
+        selectedPreset = null;
+        document.querySelectorAll('.preset-card').forEach(b => b.classList.remove('active'));
+        configMode = 'custom';
+        document.getElementById('mode-preset').classList.remove('active');
+        document.getElementById('mode-custom').classList.add('active');
+      }
+      refreshSummary();
+    }
+
+    function applyPreset(key, silent) {
+      selectedPreset = key;
+      configMode = 'preset';
+      document.getElementById('mode-preset').classList.add('active');
+      document.getElementById('mode-custom').classList.remove('active');
+      document.querySelectorAll('.preset-card').forEach(b => b.classList.toggle('active', b.dataset.preset === key));
+      applySpecToForm(catalog.presets[key].services);
+      if (!silent) refreshSummary();
+    }
+
+    function applySpecToForm(spec) {
+      for (const [svc] of Object.entries(catalog.services)) {
+        const cfg = spec[svc] || {};
+        const enabled = !!cfg.enabled;
+        document.getElementById('chk-' + svc).checked = enabled;
+        document.getElementById('svc-' + svc).classList.toggle('enabled', enabled);
+        if (!enabled) continue;
+        if (cfg.replicas && document.getElementById(svc + '-replicas')) document.getElementById(svc + '-replicas').value = cfg.replicas;
+        if (cfg.brokers && document.getElementById(svc + '-brokers')) document.getElementById(svc + '-brokers').value = cfg.brokers;
+        if (cfg.workers && document.getElementById(svc + '-workers')) document.getElementById(svc + '-workers').value = cfg.workers;
+        if (cfg.resources) {
+          document.getElementById(svc + '-cpu').value = cfg.resources.cpu;
+          document.getElementById(svc + '-memory').value = cfg.resources.memory;
+          if (cfg.resources.storage && document.getElementById(svc + '-storage')) document.getElementById(svc + '-storage').value = cfg.resources.storage;
+        }
+      }
     }
 
     function buildSpec() {
@@ -264,102 +626,209 @@
       for (const key of Object.keys(catalog.services)) {
         const enabled = document.getElementById('chk-' + key).checked;
         spec[key] = { enabled };
-        if (enabled) {
-          spec[key].resources = {
-            cpu: document.getElementById(key + '-cpu').value,
-            memory: document.getElementById(key + '-memory').value,
-          };
-          const storage = document.getElementById(key + '-storage');
-          if (storage) spec[key].resources.storage = storage.value;
-          const replicas = document.getElementById(key + '-replicas');
-          if (replicas) spec[key].replicas = parseInt(replicas.value);
-          const brokers = document.getElementById(key + '-brokers');
-          if (brokers) spec[key].brokers = parseInt(brokers.value);
-          const workers = document.getElementById(key + '-workers');
-          if (workers) spec[key].workers = parseInt(workers.value);
-        }
+        if (!enabled) continue;
+        spec[key].resources = {
+          cpu: document.getElementById(key + '-cpu').value,
+          memory: document.getElementById(key + '-memory').value,
+        };
+        const storage = document.getElementById(key + '-storage');
+        if (storage) spec[key].resources.storage = storage.value;
+        const replicas = document.getElementById(key + '-replicas');
+        if (replicas) spec[key].replicas = parseInt(replicas.value, 10);
+        const brokers = document.getElementById(key + '-brokers');
+        if (brokers) spec[key].brokers = parseInt(brokers.value, 10);
+        const workers = document.getElementById(key + '-workers');
+        if (workers) spec[key].workers = parseInt(workers.value, 10);
+        if (key === 'kafka') spec[key].ui = true;
       }
       return spec;
     }
 
-    async function deployStack() {
-      const name = document.getElementById('stack-name').value.trim();
-      const msg = document.getElementById('message');
+    function refreshSummary() {
+      const name = document.getElementById('stack-name').value.trim() || (editingStackId ? '...' : '—');
+      document.getElementById('sum-name').textContent = name;
+      document.getElementById('sum-mode').textContent = configMode === 'preset' && selectedPreset
+        ? (catalog.presets[selectedPreset]?.name || selectedPreset) : 'Произвольная';
+      clearTimeout(estimateTimer);
+      estimateTimer = setTimeout(runEstimate, 180);
+    }
+
+    async function runEstimate() {
+      try {
+        const body = (configMode === 'preset' && selectedPreset && !editingStackId)
+          ? { preset: selectedPreset, status: 'running' }
+          : { services: buildSpec(), status: 'running' };
+        const cost = await fetchJSON('/pricing/estimate', { method: 'POST', body: JSON.stringify(body) });
+        const r = cost.resources;
+        document.getElementById('sum-cpu').textContent = r.cpu;
+        document.getElementById('sum-ram').textContent = `${r.memory_gb} Gi`;
+        document.getElementById('sum-storage').textContent = `${r.storage_gb} Gi`;
+        document.getElementById('sum-services').innerHTML = (r.breakdown || []).map(b =>
+          `<span class="tag">${SERVICE_LABELS[b.service] || b.service}</span>`).join('') || '<span class="tag">нет сервисов</span>';
+        document.getElementById('sum-compute').textContent = money(cost.lines.compute);
+        document.getElementById('sum-storage-cost').textContent = money(cost.lines.storage);
+        document.getElementById('sum-managed').textContent = money(cost.lines.services);
+        document.getElementById('sum-monthly').textContent = money(cost.monthly);
+        document.getElementById('sum-hourly').textContent = money(cost.hourly);
+      } catch (_) {}
+    }
+
+    async function submitWizard() {
+      const msg = document.getElementById('deploy-alert');
       msg.innerHTML = '';
-      if (!name.match(/^[a-z][a-z0-9-]*$/)) {
-        msg.innerHTML = '<div class="message error">Имя: lowercase, начинается с буквы, a-z0-9-</div>';
-        return;
-      }
       const btn = document.getElementById('deploy-btn');
       btn.disabled = true;
       try {
-        const body = selectedPreset
-          ? { name, preset: selectedPreset }
-          : { name, services: buildSpec() };
-        await fetchJSON('/stacks', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body),
-        });
-        msg.innerHTML = '<div class="message success">Стек создаётся. Статус обновится автоматически.</div>';
-        document.getElementById('stack-name').value = '';
-        loadStacks();
-        loadQuota();
+        if (editingStackId) {
+          const body = { services: buildSpec() };
+          await fetchJSON(`/stacks/${editingStackId}`, { method: 'PATCH', body: JSON.stringify(body) });
+          msg.innerHTML = '<div class="alert alert-ok">Конфигурация обновляется, цена пересчитана.</div>';
+        } else {
+          const name = document.getElementById('stack-name').value.trim();
+          if (!/^[a-z][a-z0-9-]*$/.test(name)) throw new Error('Имя: lowercase, с буквы, a-z0-9-');
+          const body = (configMode === 'preset' && selectedPreset)
+            ? { name, preset: selectedPreset }
+            : { name, services: buildSpec() };
+          await fetchJSON('/stacks', { method: 'POST', body: JSON.stringify(body) });
+          msg.innerHTML = '<div class="alert alert-ok">Стек создаётся…</div>';
+        }
+        setTimeout(() => showPage('dashboard'), 700);
       } catch (e) {
-        msg.innerHTML = `<div class="message error">${e.message}</div>`;
-      } finally {
-        btn.disabled = false;
-      }
+        msg.innerHTML = `<div class="alert alert-error">${escapeHtml(e.message)}</div>`;
+      } finally { btn.disabled = false; }
     }
 
-    async function deleteStack(id, name) {
-      if (!confirm(`Удалить стек «${name}»?\n\nБудет удалён namespace и все сервисы (ClickHouse, Kafka, Airflow…).`)) {
-        return;
-      }
+    /* ——— Admin ——— */
+    async function loadAdmin() {
+      const pricing = await fetchJSON('/admin/pricing');
+      prices = pricing.prices;
+      document.getElementById('admin-price-note').textContent = prices.source_note || '';
+      const fields = [
+        ['vcpu_month', 'vCPU, ₽/мес'],
+        ['ram_gb_month', 'RAM Gi, ₽/мес'],
+        ['storage_gb_month', 'SSD Gi, ₽/мес'],
+        ['service_month', 'Managed-сервис, ₽/мес'],
+        ['stopped_compute_factor', 'Стоп: доля compute (0–1)'],
+        ['stopped_storage_factor', 'Стоп: доля storage (0–1)'],
+      ];
+      document.getElementById('price-fields').innerHTML = fields.map(([k, label]) => `
+        <div class="field"><label>${label}</label>
+          <input id="price-${k}" type="number" step="0.01" value="${prices[k]}">
+        </div>`).join('');
+
+      const users = await fetchJSON('/admin/users');
+      document.getElementById('admin-users').innerHTML = `<table class="svc-table"><thead><tr><th>Пользователь</th><th>Роль</th><th></th></tr></thead><tbody>
+        ${users.map(u => `<tr>
+          <td>${escapeHtml(u.name)}<div class="stack-ns">${escapeHtml(u.email)}</div></td>
+          <td>${u.is_superuser ? 'superuser' : 'user'}${u.is_active ? '' : ' · disabled'}</td>
+          <td style="white-space:nowrap">
+            ${u.is_active
+              ? `<button class="btn btn-warn btn-sm" onclick="adminUser('${u.id}','disable')">Block</button>`
+              : `<button class="btn btn-ghost btn-sm" onclick="adminUser('${u.id}','enable')">Unblock</button>`}
+            ${!u.is_superuser ? `<button class="btn btn-ghost btn-sm" onclick="adminUser('${u.id}','make-superuser')">Admin</button>` : ''}
+          </td>
+        </tr>`).join('')}
+      </tbody></table>`;
+
+      const stacks = await fetchJSON('/admin/stacks');
+      document.getElementById('admin-stacks').innerHTML = stacks.length ? `<table class="svc-table"><thead>
+        <tr><th>Стек</th><th>Владелец</th><th>Статус</th><th>₽/мес</th><th></th></tr></thead><tbody>
+        ${stacks.map(s => `<tr>
+          <td><strong>${escapeHtml(s.name)}</strong><div class="stack-ns">${escapeHtml(s.namespace)}</div></td>
+          <td>${escapeHtml(s.owner_email || '—')}</td>
+          <td><span class="status ${s.status}">${s.status}</span></td>
+          <td>${s.cost ? money(s.cost.monthly) : '—'}</td>
+          <td style="white-space:nowrap">
+            ${s.status === 'blocked'
+              ? `<button class="btn btn-ghost btn-sm" onclick="adminStack('${s.id}','unblock')">Разблок</button>`
+              : `<button class="btn btn-warn btn-sm" onclick="adminBlock('${s.id}')">Блок</button>`}
+            <button class="btn btn-danger btn-sm" onclick="adminDelete('${s.id}','${escapeHtml(s.name)}')">Удалить</button>
+          </td>
+        </tr>`).join('')}
+      </tbody></table>` : '<p style="color:var(--muted)">Кластеров нет</p>';
+    }
+
+    async function savePrices() {
+      const body = {
+        vcpu_month: +document.getElementById('price-vcpu_month').value,
+        ram_gb_month: +document.getElementById('price-ram_gb_month').value,
+        storage_gb_month: +document.getElementById('price-storage_gb_month').value,
+        service_month: +document.getElementById('price-service_month').value,
+        stopped_compute_factor: +document.getElementById('price-stopped_compute_factor').value,
+        stopped_storage_factor: +document.getElementById('price-stopped_storage_factor').value,
+        blocked_compute_factor: 0,
+        blocked_storage_factor: 1,
+      };
       try {
-        await fetchJSON(`/stacks/${id}`, { method: 'DELETE' });
-        loadStacks();
-        loadQuota();
+        const res = await fetchJSON('/admin/pricing', { method: 'PUT', body: JSON.stringify(body) });
+        prices = res.prices;
+        document.getElementById('price-alert').innerHTML = '<div class="alert alert-ok">Цены сохранены</div>';
+        document.getElementById('price-note').textContent = prices.source_note || '';
       } catch (e) {
-        alert('Ошибка удаления: ' + e.message);
+        document.getElementById('price-alert').innerHTML = `<div class="alert alert-error">${escapeHtml(e.message)}</div>`;
       }
     }
 
-    async function loadStacks() {
-      const stacks = await fetchJSON('/stacks');
-      document.getElementById('stacks').innerHTML = stacks.length
-        ? stacks.map(s => {
-            const deleting = s.status === 'deleting';
-            return `
-          <li class="stack-item">
-            <div>
-              <strong>${s.name}</strong>
-              <div style="font-size:0.75rem;color:var(--muted)">${s.namespace}</div>
-              ${s.endpoints && !deleting ? Object.entries(s.endpoints).map(([k,v]) =>
-                `<div style="font-size:0.75rem"><a href="${v.startsWith('http')?v:'#'}" target="_blank" rel="noopener" style="color:var(--accent)">${k}</a></div>`
-              ).join('') : ''}
-            </div>
-            <div class="stack-actions">
-              <span class="status ${s.status}">${s.status}</span>
-              <button class="danger" ${deleting ? 'disabled' : ''}
-                onclick="deleteStack('${s.id}', '${s.name}')">
-                ${deleting ? 'Удаление…' : 'Удалить'}
-              </button>
-            </div>
-          </li>`;
-          }).join('')
-        : '<li style="color:var(--muted)">Нет активных стеков</li>';
+    async function resetPrices() {
+      const d = (await fetchJSON('/admin/pricing')).defaults;
+      ['vcpu_month','ram_gb_month','storage_gb_month','service_month','stopped_compute_factor','stopped_storage_factor']
+        .forEach(k => { const el = document.getElementById('price-' + k); if (el) el.value = d[k]; });
     }
 
-    async function init() {
-      catalog = await fetchJSON('/services');
-      renderPresets();
-      renderServices();
-      loadQuota();
-      loadStacks();
-      setInterval(() => { loadStacks(); loadQuota(); }, 10000);
+    async function adminUser(id, action) {
+      try {
+        await fetchJSON(`/admin/users/${id}/${action}`, { method: 'POST' });
+        loadAdmin();
+      } catch (e) { alert(e.message); }
     }
-    init();
+
+    async function adminStack(id, action) {
+      try {
+        await fetchJSON(`/admin/stacks/${id}/${action}`, { method: 'POST' });
+        loadAdmin();
+      } catch (e) { alert(e.message); }
+    }
+
+    async function adminBlock(id) {
+      const reason = prompt('Причина блокировки', 'Нарушение квоты / неоплата') || 'Blocked by administrator';
+      try {
+        await fetchJSON(`/admin/stacks/${id}/block`, { method: 'POST', body: JSON.stringify({ reason }) });
+        loadAdmin();
+      } catch (e) { alert(e.message); }
+    }
+
+    async function adminDelete(id, name) {
+      if (!confirm(`Админ-удаление стека «${name}»?`)) return;
+      try {
+        await fetchJSON(`/admin/stacks/${id}`, { method: 'DELETE' });
+        loadAdmin();
+      } catch (e) { alert(e.message); }
+    }
+
+    async function boot() {
+      const saved = localStorage.getItem(USER_KEY);
+      if (saved && token()) {
+        try {
+          currentUser = await fetchJSON('/auth/me');
+          localStorage.setItem(USER_KEY, JSON.stringify(currentUser));
+          await enterApp();
+          setInterval(() => {
+            if (!token()) return;
+            if (!document.getElementById('page-dashboard').classList.contains('hidden')) {
+              loadStacks(); loadQuota();
+            }
+            if (currentUser?.is_superuser && !document.getElementById('page-admin').classList.contains('hidden')) {
+              loadAdmin();
+            }
+          }, 12000);
+          return;
+        } catch (_) { logout(false); }
+      }
+      document.getElementById('view-auth').classList.remove('hidden');
+      document.getElementById('view-app').classList.add('hidden');
+      setAuthMode('login');
+    }
+    boot();
   </script>
 </body>
 </html>
